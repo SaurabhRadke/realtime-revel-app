@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.mjs",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "node server.mjs --production",
+    "lint": "eslint",
+    "start:https": "node server.mjs --production --https"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
@@ -14,13 +15,20 @@
     "@react-three/postprocessing": "^3.2.2",
     "next": "16.4.6",
     "postprocessing": "^6.39.6",
+    "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "selfsigned": "^5.5.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "three": "^0.187.0"
   },
   "devDependencies": {
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.6"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   }
 }

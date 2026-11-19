@@ -1,0 +1,107 @@
+[
+  {
+    "url": "/models/torch.glb",
+    "kind": "torch",
+    "width": 1,
+    "depth": 1,
+    "height": 1
+  },
+  {
+    "url": "/models/abandoned.glb",
+    "kind": "house",
+    "width": 0.9272,
+    "depth": 0.9272,
+    "height": 0.6591
+  },
+  {
+    "url": "/models/abandoned-house.glb",
+    "kind": "house",
+    "width": 0.6226,
+    "depth": 0.8807,
+    "height": 0.7318
+  },
+  {
+    "url": "/models/characters/burlap-doll.glb",
+    "kind": "character",
+    "width": 0.7197,
+    "depth": 0.7796,
+    "height": 1.0257
+  },
+  {
+    "url": "/models/fairy-house.glb",
+    "kind": "house",
+    "width": 0.6026,
+    "depth": 0.6455,
+    "height": 1.0113
+  },
+  {
+    "url": "/models/fantasy.glb",
+    "kind": "house",
+    "width": 0.7152,
+    "depth": 0.7701,
+    "height": 0.8932
+  },
+  {
+    "url": "/models/fantasy-house-3d.glb",
+    "kind": "house",
+    "width": 0.759,
+    "depth": 0.789,
+    "height": 0.8373
+  },
+  {
+    "url": "/models/glb.glb",
+    "kind": "house",
+    "width": 0.8038,
+    "depth": 0.7404,
+    "height": 0.8797
+  },
+  {
+    "url": "/models/medieval-architecture.glb",
+    "kind": "house",
+    "width": 0.5126,
+    "depth": 0.8724,
+    "height": 0.7555
+  },
+  {
+    "url": "/models/characters/plague-doctor.glb",
+    "kind": "character",
+    "width": 0.7819,
+    "depth": 0.4722,
+    "height": 1.0805
+  },
+  {
+    "url": "/models/characters/pumpkin.glb",
+    "kind": "character",
+    "width": 0.6324,
+    "depth": 0.5595,
+    "height": 1.1238
+  },
+  {
+    "url": "/models/characters/robot.glb",
+    "kind": "character",
+    "width": 0.5236,
+    "depth": 0.8092,
+    "height": 0.9965
+  },
+  {
+    "url": "/models/victorian-street-lamp.glb",
+    "kind": "lamp",
+    "width": 0.7706,
+    "depth": 0.2599,
+    "height": 1.1665
+  },
+  {
+    "url": "/models/witch-cottage.glb",
+    "kind": "house",
+    "width": 0.731,
+    "depth": 0.7442,
+    "height": 0.9187
+  },
+  {
+    "url": "/models/timeworx-moon.glb",
+    "kind": "moon",
+    "width": 1,
+    "depth": 1,
+    "height": 1
+  }
+]

@@ -1,0 +1,43 @@
+/* Same look as the page's initial loader so the hand-over is seamless. */
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, #16202f 0%, #03050b 100%);
+  transition: opacity 0.6s ease;
+  z-index: 1;
+}
+
+.done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.box {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  font-family: Georgia, "Times New Roman", serif;
+  color: #c9d3e6;
+}
+
+.label {
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+
+.track {
+  width: min(220px, 60vw);
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(201, 211, 230, 0.15);
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  background: #ffb46a;
+  transition: width 0.3s ease;
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { MUD_VERGE, ROAD_HALF_LENGTH, ROAD_WIDTH } from "./config";
+import { LAMP_LIT } from "./lampLight";
 import {
   MUD_TILE_METRES,
   STONE_TILE_METRES,
@@ -28,6 +29,7 @@ function Layer({ width, textures, mask, rotationY, y, offset }) {
         polygonOffset
         polygonOffsetFactor={-offset}
         polygonOffsetUnits={-offset}
+        {...LAMP_LIT}
       />
     </mesh>
   );

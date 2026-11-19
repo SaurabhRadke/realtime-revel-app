@@ -26,24 +26,30 @@ export const EYE_HEIGHT = 1.7;
 export const WALK_SPEED = 4.5; // m/s
 export const START_POSITION = [0, EYE_HEIGHT, ROAD_HALF_LENGTH - 2.5]; // start of the main road
 
-// ---- Vintage golden-hour palette ----
+// ---- Night palette ----
+// A clear moonlit night: deep blue-black sky, cool silvery moonlight and a
+// dark blue haze that swallows the distance. Street lamps add warm pools of
+// light on top (see lampLight.js).
 export const PALETTE = {
-  skyTop: "#6a8796",
-  skyHorizon: "#e9c99a",
-  fog: "#d9bf94",
-  sun: "#ffd29a",
-  hemiSky: "#f3dcb4",
-  hemiGround: "#4a4426",
-  grassTip: "#c8b46a", // dry, straw-coloured tips
+  skyTop: "#03050b",
+  skyHorizon: "#16202f",
+  fog: "#111a27",
+  moon: "#b9c8e6", // moonlight colour
+  hemiSky: "#3a4a6b",
+  hemiGround: "#07080b",
+  grassTip: "#8a8a6a",
+  lamp: "#ffb46a", // warm gas-lamp light
 };
 
-// Low sun, slightly behind and to the side -> long warm light, backlit blades.
-export const SUN_POSITION = [-60, 34, -45];
-export const SUN_INTENSITY = 3.6;
-export const HEMI_INTENSITY = 2.1;
+// Moon sits ahead of where you start (you face -Z), fairly low, so it is in
+// view straight away; it is also the scene's key light.
+export const MOON_POSITION = [-38, 46, -110];
+export const MOON_INTENSITY = 0.75;
+export const HEMI_INTENSITY = 0.55;
 
-export const FOG_NEAR = 80;
-export const FOG_FAR = 340;
+// Closer, darker haze than by day: the far side of the town fades to night.
+export const FOG_NEAR = 25;
+export const FOG_FAR = 170;
 
 // ---- Performance tiers (chosen at runtime by PerformanceMonitor) ----
 // Blades are thin 7-vertex strips drawn in a single instanced call.

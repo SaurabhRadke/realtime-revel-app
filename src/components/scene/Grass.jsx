@@ -21,10 +21,12 @@ import {
   HEMI_INTENSITY,
   MAX_BLADES,
   PALETTE,
-  SUN_INTENSITY,
-  SUN_POSITION,
-  isOnRoad,
+  MOON_INTENSITY,
+  MOON_POSITION,
 } from "./config";
+import { isBlocked } from "./townLayout";
+import { LAMP_LIGHT_GLSL, lampUniforms } from "./lampLight";
+import { TORCH_LIGHT_GLSL, torchUniforms } from "./torchLight";
 import { fbm, mulberry32 } from "./utils";
 
 /**
@@ -68,7 +70,7 @@ function createBladeInstances(count) {
   for (let i = 0; i < count; i++) {
     // Uniform random point in the disc (random order lets quality tiers use
     // any prefix of the list and still cover the whole field evenly).
-    // Rejection-sample so no blades grow through the brick roads.
+    // Rejection-sample so no blades grow through the roads, houses or paths.
     let r = 0;
     let x = 0;
     let z = 0;
@@ -77,7 +79,7 @@ function createBladeInstances(count) {
       r = Math.sqrt(rand()) * GRASS_RADIUS;
       x = Math.cos(a) * r;
       z = Math.sin(a) * r;
-    } while (isOnRoad(x, z));
+    } while (isBlocked(x, z));
 
     const clump = fbm(x * 0.11 + 3.1, z * 0.11 - 7.3); // tufts / uneven growth
     const edge = Math.min(1, (GRASS_RADIUS - r) / 1.5); // a little shorter by the wall
@@ -162,6 +164,8 @@ const vertexShader = /* glsl */ `
 
 const fragmentShader = /* glsl */ `
   #include <common>
+  ${LAMP_LIGHT_GLSL}
+  ${TORCH_LIGHT_GLSL}
   uniform vec3  uSunDir;
   uniform vec3  uSunColor;
   uniform float uSunIntensity;
@@ -201,6 +205,12 @@ const fragmentShader = /* glsl */ `
 
     // Same 1/PI Lambert convention as three.js lights -> matches the ground.
     vec3 col = albedo * ((hemi + sun) * ao + trans) * RECIPROCAL_PI;
+
+    // Warm pools under the street lamps; tips catch a little more than roots.
+    col += albedo * lampLight(vWorldPos) * mix(0.55, 1.0, ao);
+
+    // The player's torch beam (same cone as the SpotLight on the ground).
+    col += albedo * torchLight(vWorldPos, n) * ao * RECIPROCAL_PI;
 
     float fogF = smoothstep(uFogNear, uFogFar, length(cameraPosition - vWorldPos));
     col = mix(col, uFogColor, fogF);
@@ -245,9 +255,9 @@ export default function Grass({ groundMap, count }) {
           uWindDir: { value: new Vector2(0.8, 0.6).normalize() },
           uWindStrength: { value: 0.32 },
           uGroundMap: { value: groundMap },
-          uSunDir: { value: new Vector3(...SUN_POSITION).normalize() },
-          uSunColor: { value: new Color(PALETTE.sun) },
-          uSunIntensity: { value: SUN_INTENSITY },
+          uSunDir: { value: new Vector3(...MOON_POSITION).normalize() },
+          uSunColor: { value: new Color(PALETTE.moon) },
+          uSunIntensity: { value: MOON_INTENSITY },
           uHemiSky: { value: new Color(PALETTE.hemiSky) },
           uHemiGround: { value: new Color(PALETTE.hemiGround) },
           uHemiIntensity: { value: HEMI_INTENSITY },
@@ -255,6 +265,8 @@ export default function Grass({ groundMap, count }) {
           uFogColor: { value: new Color(PALETTE.fog) },
           uFogNear: { value: FOG_NEAR },
           uFogFar: { value: FOG_FAR },
+          ...lampUniforms, // shared objects: the lamp switch reaches the grass too
+          ...torchUniforms, // and the torch beam follows the player
         },
       }),
     [groundMap],
