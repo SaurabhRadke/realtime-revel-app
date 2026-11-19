@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useRef, useState, useSyncExternalStore } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { PerformanceMonitor, useProgress } from "@react-three/drei";
 import Effects from "./Effects";
@@ -12,6 +12,10 @@ import Town from "./Town";
 import Character from "./Character";
 import PlayerController from "./PlayerController";
 import Torch from "./Torch";
+import LightPool from "./LightPool";
+import NameTag from "./NameTag";
+import Treasure from "./Treasure";
+import { roster } from "./roster";
 import { QUALITY_TIERS, START_POSITION } from "./config";
 import styles from "./Scene.module.css";
 
@@ -51,7 +55,8 @@ function LoadingScreen({ ready }) {
   );
 }
 
-export default function Scene({ lampsOn = true, characterIndex = 0, thirdPerson = false }) {
+export default function Scene({ lampsOn = true, thirdPerson = false }) {
+  const players = useSyncExternalStore(roster.subscribe, roster.getSnapshot, roster.getSnapshot);
   const [tier, setTier] = useState(guessInitialTier);
   const [ready, setReady] = useState(false);
   const q = QUALITY_TIERS[tier];
@@ -82,8 +87,15 @@ export default function Scene({ lampsOn = true, characterIndex = 0, thirdPerson 
           <Town lampsOn={lampsOn} />
 
           <PlayerController thirdPerson={thirdPerson} />
-          <Character index={characterIndex} />
-          <Torch />
+          <LightPool />
+          {players.map((p, i) => (
+            <group key={p.id}>
+              <Character id={p.id} slot={p.slot} index={p.character} />
+              <Torch id={p.id} slot={p.slot} lead={i === 0} />
+              <NameTag entry={p} />
+            </group>
+          ))}
+          <Treasure />
 
           <Effects multisampling={q.multisampling} />
           <ReadySignal onReady={() => setReady(true)} />

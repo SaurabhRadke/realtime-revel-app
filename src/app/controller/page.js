@@ -1,8 +1,8 @@
 import Controller from "./Controller";
 
 export const metadata = {
-  title: "Controller · The Old Ground",
-  description: "Phone controller: joystick to walk, point the phone to aim the torch.",
+  title: "Controller · Lanterns & Keys",
+  description: "Phone controller: joystick to walk, point the phone like a torch to find the hidden keys.",
 };
 
 export const viewport = {

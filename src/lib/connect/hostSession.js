@@ -3,13 +3,15 @@
 //   - opens (or resumes, after a reload) a room on the Socket.IO server
 //   - for every phone that joins: offers a WebRTC DataChannel; until it opens
 //     (or if it never does, e.g. strict NAT) input arrives via the socket relay
-//   - decodes input packets into the shared `remote` state the scene reads
-//   - pings each phone once a second to measure round-trip latency
+//   - decodes each phone's input packets into its own `remotes` entry, which
+//     the scene reads for that phone's character
+//   - pings each phone every two seconds to measure round-trip latency, and
+//     only tells the phone about it when the number actually moved
 //
 // One module-level instance; React reads it through useSyncExternalStore.
 
 import { io } from "socket.io-client";
-import { remote, resetRemote } from "@/components/scene/remote";
+import { deleteRemote, getRemote } from "@/components/scene/remote";
 import { Peer } from "./peer";
 import {
   FLAG_GYRO,
@@ -24,7 +26,8 @@ import {
 } from "./protocol";
 
 const STORAGE_KEY = "gyro.hostRoom";
-const PING_EVERY_MS = 1000;
+const PING_EVERY_MS = 2000;
+const STATUS_REFRESH_MS = 10_000; // resend link status at least this often
 const RTC_RETRY_MS = 2500;
 const RTC_MAX_RETRIES = 3;
 
@@ -60,7 +63,7 @@ class HostSession {
     roomId: null,
     joinOrigins: [],
     joinOrigin: null,
-    maxControllers: 1,
+    maxControllers: 4,
     peers: [],
     error: null,
   };
@@ -81,7 +84,12 @@ class HostSession {
     });
   }
 
-  /** Phone button presses (lights, view, character) for the UI to handle. */
+  /**
+   * Everything a phone asks of the screen, for the UI to handle:
+   *   {name:"joined"|"left", peerId, text: name}
+   *   {name:"lights"|"view"|"character"|"recenter"|"start"|"again", peerId}
+   *   {name:"chat"|"rename", peerId, text}
+   */
   onAction(fn) {
     this.#actionListeners.add(fn);
     return () => this.#actionListeners.delete(fn);
@@ -149,9 +157,18 @@ class HostSession {
     this.#set({ joinOrigin: origin });
   }
 
-  /** Reliable message to every phone (state for their buttons, haptics). */
+  /** Reliable message to every phone (state for their buttons). */
   broadcast(obj) {
     for (const id of this.#peers.keys()) this.#socket?.emit("msg", id, obj);
+  }
+
+  /** Reliable message to one phone. */
+  send(peerId, obj) {
+    if (this.#peers.has(peerId)) this.#socket?.emit("msg", peerId, obj);
+  }
+
+  #emitAction(a) {
+    for (const fn of this.#actionListeners) fn(a);
   }
 
   #openRoom() {
@@ -184,15 +201,15 @@ class HostSession {
   // ---------- Peers ----------
   #addPeer(id, name) {
     this.#peers.get(id)?.peer?.close();
-    const entry = this.#peers.get(id) ?? { id, name, peer: null, transport: "relay", rtt: null, lastSeq: -1, retries: 0 };
+    const known = this.#peers.has(id);
+    const entry = this.#peers.get(id) ?? { id, name, peer: null, transport: "relay", rtt: null, lastSeq: -1, retries: 0, sent: null };
     entry.name = name;
+    entry.sent = null;
     this.#peers.set(id, entry);
     this.#connectRtc(entry);
-    remote.connected = true;
-    remote.calibration += 1;
+    getRemote(id).calibration += 1;
     this.#publishPeers();
-    this.#socket.emit("msg", id, { type: "haptic", pattern: [30, 60, 30] });
-    for (const fn of this.#actionListeners) fn({ name: "joined", peerId: id });
+    if (!known) this.#emitAction({ name: "joined", peerId: id, text: name });
   }
 
   #connectRtc(entry) {
@@ -231,8 +248,9 @@ class HostSession {
     clearTimeout(entry.retryTimer);
     entry.peer?.close();
     this.#peers.delete(id);
-    if (this.#peers.size === 0) resetRemote();
+    deleteRemote(id);
     this.#publishPeers();
+    this.#emitAction({ name: "left", peerId: id });
   }
 
   #dropAllPeers() {
@@ -255,6 +273,7 @@ class HostSession {
         entry.transport = path;
         this.#publishPeers();
       }
+      const remote = getRemote(from);
       remote.q[0] = pkt.q[0];
       remote.q[1] = pkt.q[1];
       remote.q[2] = pkt.q[2];
@@ -265,11 +284,11 @@ class HostSession {
       remote.joyX = Math.max(-1, Math.min(1, pkt.joyX));
       remote.joyY = Math.max(-1, Math.min(1, pkt.joyY));
       remote.lastPacket = performance.now();
-      remote.connected = true;
     } else if (pkt.type === PKT_PONG) {
       const rtt = Math.max(0, performance.now() - pkt.time);
+      const before = entry.rtt;
       entry.rtt = entry.rtt == null ? rtt : entry.rtt * 0.6 + rtt * 0.4;
-      this.#publishPeers();
+      if (before == null || Math.abs(before - entry.rtt) >= 3) this.#publishPeers();
     } else if (pkt.type === PKT_PING) {
       this.#sendTo(entry, encodePing(PKT_PONG, pkt.id, pkt.time));
     }
@@ -278,8 +297,10 @@ class HostSession {
   #onMessage(from, obj) {
     if (!this.#peers.has(from)) return;
     if (obj.type === "action" && typeof obj.name === "string") {
-      if (obj.name === "recenter") remote.calibration += 1;
-      for (const fn of this.#actionListeners) fn({ name: obj.name, peerId: from });
+      if (obj.name === "recenter") getRemote(from).calibration += 1;
+      this.#emitAction({ name: obj.name, peerId: from });
+    } else if ((obj.type === "chat" || obj.type === "rename") && typeof obj.text === "string") {
+      this.#emitAction({ name: obj.type, peerId: from, text: obj.text });
     }
   }
 
@@ -293,12 +314,19 @@ class HostSession {
     const now = performance.now();
     for (const entry of this.#peers.values()) {
       this.#sendTo(entry, encodePing(PKT_PING, this.#pingId, now));
-      // Tell the phone how its link looks (it shows this in its status bar).
-      this.#socket?.emit("msg", entry.id, {
-        type: "status",
-        rtt: entry.rtt == null ? null : Math.round(entry.rtt),
-        transport: entry.transport,
-      });
+      // Tell the phone how its link looks (it shows this in its status bar),
+      // but only when that changed: four idle phones then cost ~nothing.
+      const rtt = entry.rtt == null ? null : Math.round(entry.rtt);
+      const last = entry.sent;
+      if (
+        !last ||
+        last.transport !== entry.transport ||
+        (rtt != null && (last.rtt == null || Math.abs(last.rtt - rtt) >= 8)) ||
+        now - last.at > STATUS_REFRESH_MS
+      ) {
+        entry.sent = { rtt, transport: entry.transport, at: now };
+        this.#socket?.emit("msg", entry.id, { type: "status", rtt, transport: entry.transport });
+      }
     }
   }
 }

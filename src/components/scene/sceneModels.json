@@ -103,5 +103,26 @@
     "width": 1,
     "depth": 1,
     "height": 1
+  },
+  {
+    "url": "/models/collect/coin.glb",
+    "kind": "coin",
+    "width": 0.0284,
+    "depth": 0.0025,
+    "height": 0.0284
+  },
+  {
+    "url": "/models/collect/treasure-chest.glb",
+    "kind": "chest",
+    "width": 1.03,
+    "depth": 0.8291,
+    "height": 0.4924
+  },
+  {
+    "url": "/models/collect/vintage-key.glb",
+    "kind": "key",
+    "width": 0.4507,
+    "depth": 1.1996,
+    "height": 0.1078
   }
 ]

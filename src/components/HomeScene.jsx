@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
-import { CHARACTERS, DEFAULT_CHARACTER } from "./scene/characters";
+import { CHARACTERS } from "./scene/characters";
 import { setInput } from "./scene/controls";
+import { roster, cyclePlayerCharacter, setPlayerCharacter } from "./scene/roster";
+import { game, startRound } from "./scene/game";
 import ConnectPhone, { useHostSession } from "./connect/ConnectPhone";
+import GameHud from "./party/GameHud";
+import ChatBox from "./party/ChatBox";
+import { startPartyHost } from "./party/partyHost";
 import { hostSession } from "@/lib/connect/hostSession";
 import styles from "./HomeScene.module.css";
 
@@ -39,7 +44,7 @@ function ArrowButton({ dir, label, className, children }) {
   );
 }
 
-// Character picker: shows who you are; opens a menu of everyone else.
+// Character picker (solo): shows who you are; opens a menu of everyone else.
 function CharacterPicker({ index, onPick }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
@@ -101,7 +106,7 @@ function CharacterPicker({ index, onPick }) {
   );
 }
 
-// First-person / third-person switch.
+// First-person / third-person switch (solo).
 function ViewToggle({ thirdPerson, onChange }) {
   return (
     <div className={styles.segmented} role="radiogroup" aria-label="Camera view" title="Switch view (V)">
@@ -125,7 +130,7 @@ function ViewToggle({ thirdPerson, onChange }) {
   );
 }
 
-// Street lamp switch. Lit by default; off leaves only the moon and stars.
+// Street lamp switch. Lit by default; off leaves only the moon, stars and torches.
 function LightSwitch({ on, onToggle }) {
   return (
     <button
@@ -154,46 +159,50 @@ function LightSwitch({ on, onToggle }) {
 
 export default function HomeScene() {
   const [lampsOn, setLampsOn] = useState(true);
-  const [character, setCharacter] = useState(DEFAULT_CHARACTER);
   const [thirdPerson, setThirdPerson] = useState(false);
   const [hintVisible, setHintVisible] = useState(true);
+  const players = useSyncExternalStore(roster.subscribe, roster.getSnapshot, roster.getSnapshot);
+  const phase = useSyncExternalStore(game.subscribe, () => game.getSnapshot().phase, () => "lobby");
+  const party = players.length > 1;
+  const lead = players[0];
 
-  // Shortcuts: L lights, C next character, V switch view.
+  // Shortcuts (solo only: with several players the keyboard types in the chat).
+  // L lights, C next character, V switch view, Enter start the hunt.
   useEffect(() => {
     const onKey = (e) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select")) return;
+      if (roster.getSnapshot().length > 1) return;
       if (e.code === "KeyL") setLampsOn((v) => !v);
-      else if (e.code === "KeyC") setCharacter((i) => (i + 1) % CHARACTERS.length);
+      else if (e.code === "KeyC") cyclePlayerCharacter(roster.getSnapshot()[0].id);
       else if (e.code === "KeyV") setThirdPerson((v) => !v);
+      else if (e.code === "Enter") startRound();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Phone controller: resume this tab's room after a reload, and handle the
-  // phone's buttons like the keyboard shortcuts.
+  // Phones: resume this tab's room after a reload, wire players/chat/game to
+  // them, and handle the shared buttons like the keyboard shortcuts.
   useEffect(() => {
     if (!hostSession) return undefined;
     hostSession.resumeIfRemembered();
-    return hostSession.onAction(({ name }) => {
+    const stopParty = startPartyHost(hostSession);
+    const offAction = hostSession.onAction(({ name }) => {
       if (name === "lights") setLampsOn((v) => !v);
       else if (name === "view") setThirdPerson((v) => !v);
-      else if (name === "character") setCharacter((i) => (i + 1) % CHARACTERS.length);
     });
+    return () => {
+      stopParty();
+      offAction();
+    };
   }, []);
 
-  // Mirror scene state to the phone so its toggles show the truth.
+  // Mirror scene state to the phones so their toggles show the truth.
   const phoneCount = useHostSession().peers.length;
   useEffect(() => {
-    if (phoneCount) {
-      hostSession?.broadcast({
-        type: "state",
-        lampsOn,
-        thirdPerson,
-        character: CHARACTERS[character].name,
-      });
-    }
-  }, [lampsOn, thirdPerson, character, phoneCount]);
+    if (phoneCount) hostSession?.broadcast({ type: "state", lampsOn, thirdPerson, party });
+  }, [lampsOn, thirdPerson, party, phoneCount]);
 
   // The controls hint fades away after a while.
   useEffect(() => {
@@ -203,27 +212,42 @@ export default function HomeScene() {
 
   return (
     <div className={styles.stage}>
-      <Scene lampsOn={lampsOn} characterIndex={character} thirdPerson={thirdPerson} />
+      <Scene lampsOn={lampsOn} thirdPerson={thirdPerson} />
+      <GameHud />
       <div className={styles.toolbar}>
         <ConnectPhone chipClass={styles.chip} labelClass={styles.chipLabel} />
-        <CharacterPicker index={character} onPick={setCharacter} />
-        <ViewToggle thirdPerson={thirdPerson} onChange={setThirdPerson} />
+        {!party && lead && <CharacterPicker index={lead.character} onPick={(i) => setPlayerCharacter(lead.id, i)} />}
+        {!party && <ViewToggle thirdPerson={thirdPerson} onChange={setThirdPerson} />}
         <LightSwitch on={lampsOn} onToggle={() => setLampsOn((v) => !v)} />
       </div>
-      <p className={`${styles.hint} ${hintVisible ? "" : styles.hintHidden}`} aria-hidden={!hintVisible}>
-        <kbd>W</kbd>
-        <kbd>S</kbd> / <kbd>↑</kbd>
-        <kbd>↓</kbd> walk · <kbd>←</kbd>
-        <kbd>→</kbd> turn · <kbd>A</kbd>
-        <kbd>D</kbd> side-step · <kbd>Shift</kbd> run · click &amp; drag to look (the torch follows) · <kbd>V</kbd> view ·{" "}
-        <kbd>C</kbd> character · <kbd>L</kbd> lights
-      </p>
-      <div className={styles.pad}>
-        <ArrowButton dir="forward" label="Move forward" className={styles.up}>▲</ArrowButton>
-        <ArrowButton dir="left" label="Turn left" className={styles.left}>◀</ArrowButton>
-        <ArrowButton dir="right" label="Turn right" className={styles.right}>▶</ArrowButton>
-        <ArrowButton dir="backward" label="Move backward" className={styles.down}>▼</ArrowButton>
-      </div>
+      {party ? (
+        <ChatBox />
+      ) : (
+        <>
+          <p className={`${styles.hint} ${hintVisible && phase === "lobby" ? "" : styles.hintHidden}`} aria-hidden={!hintVisible}>
+            <kbd>W</kbd>
+            <kbd>S</kbd> / <kbd>↑</kbd>
+            <kbd>↓</kbd> walk · <kbd>←</kbd>
+            <kbd>→</kbd> turn · <kbd>A</kbd>
+            <kbd>D</kbd> side-step · <kbd>Shift</kbd> run · drag to look (the torch follows) · <kbd>V</kbd> view · <kbd>C</kbd>{" "}
+            character · <kbd>L</kbd> lights · <kbd>Enter</kbd> start
+          </p>
+          <div className={styles.pad}>
+            <ArrowButton dir="forward" label="Move forward" className={styles.up}>
+              ▲
+            </ArrowButton>
+            <ArrowButton dir="left" label="Turn left" className={styles.left}>
+              ◀
+            </ArrowButton>
+            <ArrowButton dir="right" label="Turn right" className={styles.right}>
+              ▶
+            </ArrowButton>
+            <ArrowButton dir="backward" label="Move backward" className={styles.down}>
+              ▼
+            </ArrowButton>
+          </div>
+        </>
+      )}
     </div>
   );
 }

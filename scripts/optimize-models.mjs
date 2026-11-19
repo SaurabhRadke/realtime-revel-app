@@ -1,5 +1,5 @@
-// Shrinks the GLBs (houses, street lamp, moon, torch, and characters in
-// 3d-assets/character/) in 3d-assets/ for the web by re-encoding their 4K
+// Shrinks the GLBs (houses, street lamp, moon, torch, characters in
+// 3d-assets/character/ and collectables in 3d-assets/collect-assets/) in 3d-assets/ for the web by re-encoding their 4K
 // PNG textures as smaller WebP (via ffmpeg) and writing the result to
 // public/models/. Geometry is copied untouched.
 //
@@ -90,7 +90,7 @@ function measure(json) {
   return { width: r(max[0] - min[0]), depth: r(max[1] - min[1]), height: r(max[2] - min[2]) };
 }
 
-function optimize(srcFile, outFile, tmp) {
+function optimize(srcFile, outFile, tmp, sizes = {}) {
   const { json, bin } = readGlb(srcFile);
   const size = measure(json);
 
@@ -105,7 +105,7 @@ function optimize(srcFile, outFile, tmp) {
   (json.images ?? []).forEach((img, i) => {
     const view = json.bufferViews[img.bufferView];
     const data = bin.subarray(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength);
-    const size = baseColorImages.has(i) ? BASE_COLOR_SIZE : OTHER_SIZE;
+    const size = baseColorImages.has(i) ? (sizes.base ?? BASE_COLOR_SIZE) : (sizes.other ?? OTHER_SIZE);
     replaced.set(img.bufferView, toWebp(data, size, tmp, `img${i}`));
     img.mimeType = "image/webp";
   });
@@ -141,37 +141,64 @@ function optimize(srcFile, outFile, tmp) {
   return size;
 }
 
+// Collectables (coin, key, treasure chest) are small on screen: smaller maps.
+const COLLECT_SIZES = { base: 1024, other: 512 };
+const collectKind = (f) => (/chest/i.test(f) ? "chest" : /key/i.test(f) ? "key" : "coin");
+const COLLECT_NAMES = { chest: "treasure-chest.glb", key: "vintage-key.glb", coin: "coin.glb" };
+
+// `node scripts/optimize-models.mjs --only=collect` re-encodes just the
+// collectables and merges them into the existing manifest.
+const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7) ?? null;
+
 mkdirSync(OUT, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), "houses-"));
 const models = [];
 try {
-  // Top-level files, plus the characters in their own sub-folder.
-  const sources = [
-    ...readdirSync(SRC).filter((f) => f.endsWith(".glb")).map((f) => ({ f, dir: SRC, character: false })),
-    ...readdirSync(join(SRC, "character"))
+  const list = (dir, group) =>
+    readdirSync(dir)
       .filter((f) => f.endsWith(".glb"))
-      .map((f) => ({ f, dir: join(SRC, "character"), character: true })),
-  ].sort((a, b) => a.f.localeCompare(b.f));
-  for (const { f, dir, character } of sources) {
-    const name = basename(f).replace(/^(pixellabs|jerryblessed)-/, "").replace(/-\d+\.glb$/, ".glb");
-    const out = join(OUT, character ? "characters" : "", name);
-    mkdirSync(join(OUT, character ? "characters" : ""), { recursive: true });
-    const size = optimize(join(dir, f), out, tmp);
+      .map((f) => ({ f, dir, group }));
+  // Top-level files, plus the characters and collectables in their own sub-folders.
+  const sources = [
+    ...list(SRC, "scene"),
+    ...list(join(SRC, "character"), "character"),
+    ...list(join(SRC, "collect-assets"), "collect"),
+  ]
+    .filter((s) => !only || s.group === only)
+    .sort((a, b) => a.f.localeCompare(b.f));
+  for (const { f, dir, group } of sources) {
+    const character = group === "character";
+    const collect = group === "collect";
+    const sub = character ? "characters" : collect ? "collect" : "";
+    const name = collect
+      ? COLLECT_NAMES[collectKind(f)]
+      : basename(f).replace(/^(pixellabs|jerryblessed)-/, "").replace(/-\d+\.glb$/, ".glb");
+    const out = join(OUT, sub, name);
+    mkdirSync(join(OUT, sub), { recursive: true });
+    const size = optimize(join(dir, f), out, tmp, collect ? COLLECT_SIZES : undefined);
     const kind = character
       ? "character"
-      : /lamp/i.test(f)
-        ? "lamp"
-        : /moon/i.test(f)
-          ? "moon"
-          : /torch/i.test(f)
-            ? "torch"
-            : "house";
+      : collect
+        ? collectKind(f)
+        : /lamp/i.test(f)
+          ? "lamp"
+          : /moon/i.test(f)
+            ? "moon"
+            : /torch/i.test(f)
+              ? "torch"
+              : "house";
     models.push({ url: "/" + out.replace(/^public\//, ""), kind, ...size });
     const before = readFileSync(join(dir, f)).length / 1e6;
     const after = readFileSync(out).length / 1e6;
     console.log(`${f} -> ${out}  ${before.toFixed(1)}MB -> ${after.toFixed(1)}MB`);
   }
-  writeFileSync(MANIFEST, JSON.stringify(models, null, 2) + "\n");
+  let manifest = models;
+  if (only) {
+    const urls = new Set(models.map((m) => m.url));
+    const prev = JSON.parse(readFileSync(MANIFEST, "utf8")).filter((m) => !urls.has(m.url));
+    manifest = [...prev, ...models];
+  }
+  writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + "\n");
   console.log(`wrote ${MANIFEST}`);
 } finally {
   rmSync(tmp, { recursive: true, force: true });

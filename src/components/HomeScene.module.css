@@ -76,7 +76,7 @@
   position: absolute;
   top: 16px;
   right: 16px;
-  left: 16px;
+  left: 362px; /* clear of the treasure-hunt panel */
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -97,7 +97,7 @@
   border-radius: 22px;
   background: rgba(12, 18, 30, 0.55);
   color: #c9d3e6;
-  font: 500 14px/1 Georgia, "Times New Roman", serif;
+  font: 400 15px/1 var(--font-display), Georgia, serif;
   letter-spacing: 0.04em;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -183,7 +183,7 @@
   border-radius: 10px;
   background: transparent;
   color: #c9d3e6;
-  font: 500 14px/1 Georgia, "Times New Roman", serif;
+  font: 400 15px/1 var(--font-display), Georgia, serif;
   text-align: left;
   cursor: pointer;
 }
@@ -224,7 +224,8 @@
 
 .hint {
   position: absolute;
-  left: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 22px;
   max-width: min(560px, calc(100% - 240px));
   margin: 0;
@@ -232,7 +233,7 @@
   border-radius: 12px;
   background: rgba(8, 12, 22, 0.55);
   color: rgba(201, 211, 230, 0.85);
-  font: 13px/1.9 Georgia, "Times New Roman", serif;
+  font: 14px/1.9 var(--font-display), Georgia, serif;
   transition: opacity 1.2s ease;
   pointer-events: none;
 }
@@ -253,6 +254,10 @@
 }
 
 @media (max-width: 640px) {
+  .toolbar {
+    left: 16px;
+  }
+
   .chipLabel {
     display: none;
   }

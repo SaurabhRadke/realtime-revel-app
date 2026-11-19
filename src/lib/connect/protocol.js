@@ -1,30 +1,35 @@
 // Wire format shared by the phone (controller) and the desktop (host).
 //
-// Input is sent ~60 times a second, so it goes as a fixed 28-byte binary
-// packet instead of JSON (~5x smaller, no parsing). The same bytes travel over
-// the WebRTC DataChannel or, as a fallback, the Socket.IO relay.
+// Input is the only high-rate traffic, so it goes as a fixed 14-byte binary
+// packet instead of JSON: the attitude quaternion is quantised to int16 per
+// component (~0.003 precision, far below what a hand can hold steady) and the
+// joystick to int8. Same bytes over the WebRTC DataChannel or, as a fallback,
+// the Socket.IO relay.
 //
-//   INPUT (28 B)                     PING / PONG (12 B)
-//   0  u8   type = 1                 0  u8   type = 2 | 3
-//   1  u8   flags                    1  u8   0
-//   2  u16  seq                      2  u16  id
-//   4  f32  qx  \                    4  f64  sender timestamp (ms)
-//   8  f32  qy   | device attitude
-//   12 f32  qz   | (unit quaternion,
-//   16 f32  qw  /   earth frame)
-//   20 f32  joyX  -1..1 (right +)
-//   24 f32  joyY  -1..1 (forward +)
+//   INPUT (14 B)                      PING / PONG (12 B)
+//   0  u8   type = 1                  0  u8   type = 2 | 3
+//   1  u8   flags                     1  u8   0
+//   2  u16  seq                       2  u16  id
+//   4  i16  qx  \                     4  f64  sender timestamp (ms)
+//   6  i16  qy   | device attitude
+//   8  i16  qz   | (unit quaternion * 32767, earth frame)
+//   10 i16  qw  /
+//   12 i8   joyX  -127..127 (right +)
+//   13 i8   joyY  -127..127 (forward +)
 
 export const PKT_INPUT = 1;
 export const PKT_PING = 2;
 export const PKT_PONG = 3;
 
 export const FLAG_GYRO = 1; // quaternion is valid
-export const FLAG_RUN = 2; // run button held
+export const FLAG_RUN = 2; // sprint is on
 export const FLAG_TORCH = 4; // torch should follow the phone (gyro aiming on)
 
-const INPUT_BYTES = 28;
+const INPUT_BYTES = 14;
 const PING_BYTES = 12;
+
+const q16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v * 32767)));
+const q8 = (v) => Math.max(-127, Math.min(127, Math.round(v * 127)));
 
 export function encodeInput({ seq, flags, q, joyX, joyY }) {
   const buf = new ArrayBuffer(INPUT_BYTES);
@@ -32,12 +37,12 @@ export function encodeInput({ seq, flags, q, joyX, joyY }) {
   v.setUint8(0, PKT_INPUT);
   v.setUint8(1, flags);
   v.setUint16(2, seq & 0xffff, true);
-  v.setFloat32(4, q[0], true);
-  v.setFloat32(8, q[1], true);
-  v.setFloat32(12, q[2], true);
-  v.setFloat32(16, q[3], true);
-  v.setFloat32(20, joyX, true);
-  v.setFloat32(24, joyY, true);
+  v.setInt16(4, q16(q[0]), true);
+  v.setInt16(6, q16(q[1]), true);
+  v.setInt16(8, q16(q[2]), true);
+  v.setInt16(10, q16(q[3]), true);
+  v.setInt8(12, q8(joyX));
+  v.setInt8(13, q8(joyY));
   return buf;
 }
 
@@ -63,14 +68,20 @@ export function decode(data) {
   if (!v || v.byteLength < 1) return null;
   const type = v.getUint8(0);
   if (type === PKT_INPUT && v.byteLength >= INPUT_BYTES) {
-    const q = [v.getFloat32(4, true), v.getFloat32(8, true), v.getFloat32(12, true), v.getFloat32(16, true)];
-    const joyX = v.getFloat32(20, true);
-    const joyY = v.getFloat32(24, true);
-    if (![...q, joyX, joyY].every(Number.isFinite)) return null;
-    return { type, flags: v.getUint8(1), seq: v.getUint16(2, true), q, joyX, joyY };
+    const q = [v.getInt16(4, true) / 32767, v.getInt16(6, true) / 32767, v.getInt16(8, true) / 32767, v.getInt16(10, true) / 32767];
+    return {
+      type,
+      flags: v.getUint8(1),
+      seq: v.getUint16(2, true),
+      q,
+      joyX: v.getInt8(12) / 127,
+      joyY: v.getInt8(13) / 127,
+    };
   }
   if ((type === PKT_PING || type === PKT_PONG) && v.byteLength >= PING_BYTES) {
-    return { type, id: v.getUint16(2, true), time: v.getFloat64(4, true) };
+    const time = v.getFloat64(4, true);
+    if (!Number.isFinite(time)) return null;
+    return { type, id: v.getUint16(2, true), time };
   }
   return null;
 }
@@ -81,3 +92,30 @@ export function seqNewer(seq, last) {
 }
 
 export const ROOM_CODE_RE = /^[A-Z2-9]{4}$/;
+
+// ---- Reliable JSON messages (over the socket "msg" event) ----
+//
+// phone -> screen
+//   {type:"action", name}          lights | view | character | recenter | start | again
+//   {type:"chat", text}            say something (only lands if someone is near)
+//   {type:"rename", name}
+// screen -> phone
+//   {type:"status", rtt, transport}
+//   {type:"state", lampsOn, thirdPerson, party}
+//   {type:"you", name, character, accent, color}
+//   {type:"game", phase, gold, keys, keysTotal, rank, players, endsIn, objective, result?}
+//   {type:"near", names:[...]}     who is inside your chat circle right now
+//   {type:"chat", from, text, self}
+//   {type:"chat:denied"}
+
+export const MAX_NAME = 16;
+export const MAX_CHAT = 100;
+
+/** Trim + strip control characters; keeps emoji and every script. */
+export function cleanText(s, max) {
+  return String(s ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}

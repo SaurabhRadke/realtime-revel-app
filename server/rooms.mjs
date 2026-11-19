@@ -25,12 +25,13 @@
 import crypto from "node:crypto";
 import { lanAddresses } from "./net.mjs";
 
-const MAX_CONTROLLERS = Number(process.env.MAX_CONTROLLERS ?? 1);
+const MAX_CONTROLLERS = Number(process.env.MAX_CONTROLLERS ?? 4); // players per screen
 const HOST_GRACE_MS = 30_000; // keep the room this long if the host reloads
 const MAX_PKT_BYTES = 64;
 const MAX_MSG_BYTES = 2_048;
 const MAX_SIGNAL_BYTES = 16_384;
-const PKT_RATE = 150; // packets per second per socket, generous for 60 Hz input
+const PKT_RATE = 150; // packets per second per socket, generous for 30 Hz input + pings
+const MSG_RATE = 12; // reliable JSON messages per second per socket (chat, actions, game state)
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
 
@@ -48,8 +49,9 @@ function newRoomId() {
 
 const cleanName = (n) =>
   String(n ?? "Phone")
-    .replace(/[^\p{L}\p{N} _.-]/gu, "")
-    .slice(0, 24) || "Phone";
+    .replace(/[^\p{L}\p{N} _.'-]/gu, "")
+    .trim()
+    .slice(0, 16) || "Phone";
 
 // ---------- LAN WebRTC helper: mDNS candidate rewriting ----------
 // Browsers hide local IPs in ICE candidates behind random "<uuid>.local" mDNS
@@ -125,6 +127,9 @@ export function attachRooms(io) {
     socket.data.role = null;
     socket.data.roomId = null;
     const allowPkt = makeLimiter(PKT_RATE);
+    const allowPhoneMsg = makeLimiter(MSG_RATE);
+    // The host fans out to every phone in the room, so it gets their share.
+    const allowHostMsg = makeLimiter(MSG_RATE * (MAX_CONTROLLERS + 1));
 
     const myRoom = () => (socket.data.roomId ? rooms.get(socket.data.roomId) : undefined);
 
@@ -235,6 +240,7 @@ export function attachRooms(io) {
     });
 
     socket.on("msg", (a, b) => {
+      if (!(socket.data.role === "host" ? allowHostMsg() : allowPhoneMsg())) return;
       const [to, obj] = socket.data.role === "host" ? [a, b] : [null, a];
       if (!obj || typeof obj !== "object" || byteSize(obj) > MAX_MSG_BYTES) return;
       const dest = target(to);

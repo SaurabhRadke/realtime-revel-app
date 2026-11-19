@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { AdditiveBlending, Color, ConeGeometry, DoubleSide, Quaternion, ShaderMaterial, Vector3 } from "three";
-import { player } from "./player";
+import { getPlayerState } from "./player";
+import { glowLight, torchSpots } from "./sharedLights";
 import SCENE_MODELS from "./sceneModels.json";
 import { TORCH, torchUniforms } from "./torchLight";
 
@@ -67,7 +68,7 @@ function createBeamGeometry() {
 }
 
 function stepTorch(state, dt, refs) {
-  const { holder, beam, spot, target, glow } = refs;
+  const { holder, beam, player, slot, lead } = refs;
   const h = holder.current;
   if (!h) return;
   const cam = state.camera;
@@ -98,18 +99,28 @@ function stepTorch(state, dt, refs) {
   _dir.divideScalar(dist || 1);
 
   const on = player.torchScale;
-  const flicker = 1 + Math.sin(state.clock.elapsedTime * 23) * 0.01; // LED driver hum
-  if (spot.current && target.current) {
-    spot.current.position.copy(_lens);
-    target.current.position.copy(player.aim);
-    target.current.updateMatrixWorld();
-    spot.current.intensity = TORCH.intensity * on * flicker;
+  const flicker = 1 + Math.sin(state.clock.elapsedTime * 23 + slot * 1.7) * 0.01; // LED driver hum
+  const spot = torchSpots[slot];
+  spot.position.copy(_lens);
+  spot.target.copy(player.aim);
+  spot.intensity = TORCH.intensity * on * flicker;
+  if (lead) {
+    // The warm spill around the lens: only the solo / first player's torch.
+    _lens.set(0, 0, LENS_Z + 0.05);
+    h.localToWorld(_lens);
+    glowLight.position.copy(_lens);
+    glowLight.intensity = 0.9 * on;
+    _lens.copy(spot.position);
   }
-  if (glow.current) glow.current.intensity = 0.9 * on;
 
-  torchUniforms.uTorchPos.value.copy(_lens);
-  torchUniforms.uTorchDir.value.copy(_dir);
-  torchUniforms.uTorchColor.value.set(TORCH.color).multiplyScalar(TORCH.intensity * on * flicker);
+  torchUniforms.uTorchPos.value[slot].copy(_lens);
+  torchUniforms.uTorchDir.value[slot].copy(_dir);
+  torchUniforms.uTorchColor.value[slot].set(TORCH.color).multiplyScalar(TORCH.intensity * on * flicker);
+
+  // For the treasure hunt: where this beam shines.
+  player.lens.copy(_lens);
+  player.beamDir.copy(_dir);
+  player.torchOn = on;
 
   // Beam: from the lens, stretched to (a little past) whatever it hits.
   const b = beam.current;
@@ -125,7 +136,8 @@ function stepTorch(state, dt, refs) {
   }
 }
 
-export default function Torch() {
+export default function Torch({ id, slot = 0, lead = false }) {
+  const player = getPlayerState(id, slot);
   const { scene } = useGLTF(TORCH_URL, false);
   const model = useMemo(() => {
     const root = scene.clone(true);
@@ -176,15 +188,18 @@ export default function Torch() {
 
   const holder = useRef(null);
   const beam = useRef(null);
-  const spot = useRef(null);
-  const target = useRef(null);
-  const glow = useRef(null);
 
-  useEffect(() => {
-    if (spot.current && target.current) spot.current.target = target.current;
-  }, []);
+  // Leaving: switch this slot's light off (the pool keeps the light itself).
+  useEffect(
+    () => () => {
+      torchSpots[slot].intensity = 0;
+      torchUniforms.uTorchColor.value[slot].setRGB(0, 0, 0);
+      if (lead) glowLight.intensity = 0;
+    },
+    [slot, lead],
+  );
 
-  useFrame((state, dt) => stepTorch(state, dt, { holder, beam, spot, target, glow }), -1);
+  useFrame((state, dt) => stepTorch(state, dt, { holder, beam, player, slot, lead }), -1.5);
 
   return (
     <>
@@ -192,8 +207,6 @@ export default function Torch() {
         <group position={[0, 0, GRIP_SHIFT]} rotation={[0, Math.PI, 0]} scale={TORCH_SCALE}>
           <primitive object={model} />
         </group>
-        {/* Warm spill around the lens: lights the hand and nearby ground. */}
-        <pointLight ref={glow} position={[0, 0, LENS_Z + 0.05]} color={TORCH.color} distance={3.5} decay={2} />
       </group>
       <mesh
         ref={beam}
@@ -202,16 +215,6 @@ export default function Torch() {
         renderOrder={6}
         frustumCulled={false}
       />
-      <spotLight
-        ref={spot}
-        color={TORCH.color}
-        angle={TORCH.angle}
-        penumbra={TORCH.penumbra}
-        decay={TORCH.decay}
-        distance={TORCH.distance}
-        intensity={0}
-      />
-      <object3D ref={target} />
     </>
   );
 }

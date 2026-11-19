@@ -3,15 +3,19 @@
 //   - joins the room from the QR code over Socket.IO
 //   - answers the host's WebRTC offer; sends input over the DataChannel when
 //     it is open, otherwise over the socket relay (same bytes either way)
-//   - streams input at 60 Hz while something changes, 10 Hz keep-alive otherwise
+//   - streams input at 30 Hz while something changes (the screen smooths
+//     between packets), a 5 Hz keep-alive otherwise; gyro jitter below
+//     ~0.4 degrees doesn't count as a change, so a phone held still is quiet
 //   - echoes the host's pings so the host can measure latency
 
 import { io } from "socket.io-client";
 import { Peer } from "./peer";
 import { PKT_PING, PKT_PONG, decode, encodeInput, encodePing } from "./protocol";
 
-const SEND_MS = 1000 / 60;
-const KEEPALIVE_MS = 100;
+const SEND_MS = 1000 / 30;
+const KEEPALIVE_MS = 200;
+// |dot(q1, q2)| above this = less than ~0.4 degrees apart: not worth sending.
+const GYRO_DEADBAND = Math.cos(((0.4 * Math.PI) / 180) / 2);
 
 export class ControllerSession {
   #socket = null;
@@ -22,6 +26,7 @@ export class ControllerSession {
   #seq = 0;
   #lastSent = 0;
   #dirty = true;
+  #sentQ = [0, 0, 0, 1];
   #listeners = new Set();
   #msgListeners = new Set();
   #snapshot = {
@@ -68,7 +73,8 @@ export class ControllerSession {
 
   setAttitude(q) {
     this.input.q = q;
-    this.#dirty = true;
+    const p = this.#sentQ;
+    if (Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] + q[3] * p[3]) < GYRO_DEADBAND) this.#dirty = true;
   }
 
   join(roomId, name) {
@@ -116,8 +122,6 @@ export class ControllerSession {
     socket.on("msg", (_from, obj) => {
       if (obj?.type === "status") {
         this.#set({ rtt: obj.rtt, hostOnline: true });
-      } else if (obj?.type === "haptic" && Array.isArray(obj.pattern)) {
-        navigator.vibrate?.(obj.pattern.slice(0, 8).map((n) => Math.min(400, Math.max(0, n | 0))));
       }
       for (const fn of this.#msgListeners) fn(obj);
     });
@@ -136,6 +140,16 @@ export class ControllerSession {
   /** Reliable button press (lights, view, recenter...). */
   action(name) {
     this.#socket?.emit("msg", { type: "action", name });
+  }
+
+  /** Say something to whoever is near your character. */
+  chat(text) {
+    this.#socket?.emit("msg", { type: "chat", text });
+  }
+
+  rename(name) {
+    this.#name = name;
+    this.#socket?.emit("msg", { type: "rename", text: name });
   }
 
   #newPeer() {
@@ -177,6 +191,7 @@ export class ControllerSession {
     this.#dirty = false;
     this.#lastSent = now;
     this.#seq = (this.#seq + 1) & 0xffff;
+    this.#sentQ = this.input.q;
     this.#send(encodeInput({ seq: this.#seq, ...this.input }));
   }
 }

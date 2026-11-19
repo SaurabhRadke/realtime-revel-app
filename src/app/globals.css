@@ -8,7 +8,16 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background: #d9bf94;
-  color: #2b2214;
+  background: #05070d;
+  color: #e9dfc8;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Macondo Swash Caps everywhere, including form controls (which don't inherit by default). */
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
 }

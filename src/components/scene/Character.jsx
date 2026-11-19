@@ -18,7 +18,8 @@ import {
 } from "three";
 import { CHARACTERS } from "./characters";
 import { patchLampLight } from "./lampLight";
-import { player } from "./player";
+import { getPlayerState } from "./player";
+import { flashLight } from "./sharedLights";
 import { cutLimbBridges, limbRotations } from "./rigMath";
 
 // Every character is fetched with the town, so swapping is instant.
@@ -394,7 +395,7 @@ function rotX(v, a) {
 // Per-frame update (outside the component: it mutates three.js objects and
 // uniforms, which React state is not involved in).
 function stepCharacter(state, rawDt, c) {
-  const { tl, fx, fxm, shown, setShown, def, root, pose, body, pillar, ring1, ring2, sparks, flash } = c;
+  const { tl, fx, fxm, shown, setShown, def, root, pose, body, pillar, ring1, ring2, sparks, player } = c;
   const dt = Math.min(rawDt, 0.1);
   const s = tl;
   s.t += dt;
@@ -458,9 +459,10 @@ function stepCharacter(state, rawDt, c) {
   r.position.copy(player.position);
   r.rotation.y = player.bodyYaw + Math.PI; // baked models face +Z; bodyYaw 0 faces -Z
   player.eyeHeight = def.height * 0.94;
+  player.height = def.height;
 
   // Hidden in first person (except while a swap is being shown).
-  r.visible = player.camBlend > 0.12 || s.phase !== "idle";
+  r.visible = !player.firstPerson || s.phase !== "idle";
 
   // ---- procedural walk ----
   // walkPhase advances PI per step; sin(ph) > 0 means the left leg is ahead.
@@ -566,13 +568,17 @@ function stepCharacter(state, rawDt, c) {
     }
   }
   if (sparks.current) sparks.current.visible = s.phase === "out" || s.phase === "in" || s.phase === "linger";
-  if (flash.current) {
-    flash.current.intensity = flashI;
-    flash.current.color.copy(fxm.color);
+  // One shared flash light for every character (see sharedLights.js): a
+  // light per character would recompile every material when players join.
+  if (flashI > flashLight.intensity) {
+    flashLight.intensity = flashI;
+    flashLight.color.copy(fxm.color);
+    flashLight.position.set(r.position.x, 1.3, r.position.z);
   }
 }
 
-export default function Character({ index }) {
+export default function Character({ id, slot = 0, index }) {
+  const player = getPlayerState(id, slot);
   const [shown, setShown] = useState(index);
   const def = CHARACTERS[shown];
 
@@ -607,7 +613,6 @@ export default function Character({ index }) {
   const ring1 = useRef(null);
   const ring2 = useRef(null);
   const sparks = useRef(null);
-  const flash = useRef(null);
   const tl = useRef({ phase: "wait", t: 0, target: index, walk: 0, turn: 0, aimPitch: -0.2 });
 
   // Retarget when the picker changes (also mid-swap: it just plays on).
@@ -631,7 +636,7 @@ export default function Character({ index }) {
         ring1,
         ring2,
         sparks,
-        flash,
+        player,
       }),
     -2,
   );
@@ -647,7 +652,6 @@ export default function Character({ index }) {
       <mesh ref={ring1} geometry={fxm.ringGeo} material={fxm.ring} position={[0, 0.05, 0]} visible={false} />
       <mesh ref={ring2} geometry={fxm.ringGeo} material={fxm.ring2} position={[0, 0.05, 0]} visible={false} />
       <points ref={sparks} geometry={fxm.sparkGeo} material={fxm.spark} frustumCulled={false} visible={false} />
-      <pointLight ref={flash} position={[0, 1.3, 0]} intensity={0} distance={12} decay={1.6} />
     </group>
   );
 }
