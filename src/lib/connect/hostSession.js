@@ -87,7 +87,8 @@ class HostSession {
   /**
    * Everything a phone asks of the screen, for the UI to handle:
    *   {name:"joined"|"left", peerId, text: name}
-   *   {name:"lights"|"view"|"character"|"start"|"again", peerId}
+   *   {name:"lights"|"view"|"character"|"start"|"again"|"ready"|"talk"|"bye", peerId}
+   *   {name:"choose"|"mode", peerId, arg}
    *   {name:"chat"|"rename", peerId, text}
    */
   onAction(fn) {
@@ -304,7 +305,9 @@ class HostSession {
   #onMessage(from, obj) {
     if (!this.#peers.has(from)) return;
     if (obj.type === "action" && typeof obj.name === "string") {
-      this.#emitAction({ name: obj.name, peerId: from });
+      // Optional short argument: a dialogue choice, a game mode...
+      const arg = typeof obj.arg === "string" ? obj.arg.slice(0, 40) : undefined;
+      this.#emitAction({ name: obj.name.slice(0, 24), peerId: from, arg });
     } else if ((obj.type === "chat" || obj.type === "rename") && typeof obj.text === "string") {
       this.#emitAction({ name: obj.type, peerId: from, text: obj.text });
     }

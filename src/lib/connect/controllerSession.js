@@ -3,15 +3,16 @@
 //   - joins the room from the QR code over Socket.IO
 //   - answers the host's WebRTC offer; sends input over the DataChannel when
 //     it is open, otherwise over the socket relay (same bytes either way)
-//   - streams input at 30 Hz while something changes (the screen smooths
-//     between packets), a 5 Hz keep-alive otherwise, so an idle phone is quiet
+//   - streams input at up to 60 Hz while something changes (a change is sent
+//     right away when the last packet is old enough, so there is no wait for
+//     the next tick), a 5 Hz keep-alive otherwise, so an idle phone is quiet
 //   - echoes the host's pings so the host can measure latency
 
 import { io } from "socket.io-client";
 import { Peer } from "./peer";
 import { LOOK_UNIT, PKT_PING, PKT_PONG, decode, encodeInput, encodePing } from "./protocol";
 
-const SEND_MS = 1000 / 30;
+const SEND_MS = 1000 / 60;
 const KEEPALIVE_MS = 200;
 
 export class ControllerSession {
@@ -58,13 +59,19 @@ export class ControllerSession {
 
   setFlags(flags) {
     this.input.flags = flags;
-    this.#dirty = true;
+    this.#changed();
   }
 
   setJoystick(x, y) {
     this.input.joyX = x;
     this.input.joyY = y;
+    this.#changed();
+  }
+
+  // Send now if the last packet is a frame old; otherwise the timer picks it up.
+  #changed() {
     this.#dirty = true;
+    if (performance.now() - this.#lastSent >= SEND_MS - 1) this.#tick();
   }
 
   /** Swipe on the look pad: radians to turn right (dx) and to look up (dy). */
@@ -72,7 +79,7 @@ export class ControllerSession {
     // Running totals in LOOK_UNITs, kept small (the packet wraps them anyway).
     this.input.lookX = (this.input.lookX + dx / LOOK_UNIT) % 65536;
     this.input.lookY = (this.input.lookY + dy / LOOK_UNIT) % 65536;
-    this.#dirty = true;
+    this.#changed();
   }
 
   join(roomId, name) {
@@ -135,9 +142,9 @@ export class ControllerSession {
     this.#socket = null;
   }
 
-  /** Reliable button press (lights, view, character...). */
-  action(name) {
-    this.#socket?.emit("msg", { type: "action", name });
+  /** Reliable button press (lights, view, character...), with an optional short argument. */
+  action(name, arg) {
+    this.#socket?.emit("msg", arg === undefined ? { type: "action", name } : { type: "action", name, arg: String(arg) });
   }
 
   /** Say something to whoever is near your character. */

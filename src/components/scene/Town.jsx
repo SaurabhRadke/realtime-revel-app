@@ -125,16 +125,34 @@ for (const url of getTownModelUrls()) useGLTF.preload(url, false);
 
 // ---- Street lamp light ----
 
-// World position of each lamp's lantern (the glass box at the top of the post).
-const LANTERNS = getTownLayout().lamps.map((l) => {
-  const off = LANTERN_OFFSET_X * l.scale; // model units -> metres
-  return {
-    x: l.x + Math.cos(l.yaw) * off,
-    z: l.z - Math.sin(l.yaw) * off,
-    y: l.height * LANTERN_HEIGHT_FRACTION,
-  };
-});
+// World position of each lamp's lantern (the glass box at the top of the post),
+// nearest the crossroads first: Lamps Out relights them in this order,
+// spreading out from Old Wick.
+const LANTERNS = getTownLayout()
+  .lamps.map((l) => {
+    const off = LANTERN_OFFSET_X * l.scale; // model units -> metres
+    return {
+      x: l.x + Math.cos(l.yaw) * off,
+      z: l.z - Math.sin(l.yaw) * off,
+      y: l.height * LANTERN_HEIGHT_FRACTION,
+    };
+  })
+  .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
 lampUniforms.uLampMap.value = createLampLightMap(LANTERNS);
+const litCountFor = (level) => (level >= 1 ? LANTERNS.length : Math.round(level * LANTERNS.length));
+
+// Repaints the light map when only some lamps burn.
+function LampMap({ count }) {
+  useEffect(() => {
+    if (count === LANTERNS.length && lampUniforms.uLampMap.value?.userData.count === count) return;
+    const old = lampUniforms.uLampMap.value;
+    const map = createLampLightMap(LANTERNS.slice(0, count));
+    map.userData.count = count;
+    lampUniforms.uLampMap.value = map;
+    old?.dispose();
+  }, [count]);
+  return null;
+}
 
 function glowTexture(stops) {
   const size = 128;
@@ -149,7 +167,8 @@ function glowTexture(stops) {
 }
 
 // Glowing lanterns: a hot core and a wide soft halo, one draw call each.
-function LanternGlow() {
+// Only the first `count` (the lit ones) are drawn.
+function LanternGlow({ count }) {
   const res = useMemo(() => {
     const geo = new BufferGeometry();
     geo.setAttribute("position", new Float32BufferAttribute(LANTERNS.flatMap((p) => [p.x, p.y, p.z]), 3));
@@ -176,6 +195,9 @@ function LanternGlow() {
     },
     [res],
   );
+  useEffect(() => {
+    res.geo.setDrawRange(0, count);
+  }, [res, count]);
   useFrame(() => {
     const k = lampUniforms.uLampStrength.value;
     if (coreMat.current) coreMat.current.opacity = k;
@@ -196,9 +218,12 @@ function LanternGlow() {
 }
 
 // Eases the lamps on/off; switching on, the gas mantles sputter briefly.
-function LampSwitch({ on }) {
+// `level` (0..1) is the share of lamps burning: Lamps Out puts them all out and
+// every delivered flask relights a few more (each time they sputter back on).
+function LampSwitch({ on, level = 1 }) {
   const since = useRef(0);
   const wasOn = useRef(on);
+  const lastLevel = useRef(level);
   useFrame((_, dt) => {
     if (on !== wasOn.current) {
       wasOn.current = on;
@@ -210,16 +235,22 @@ function LampSwitch({ on }) {
       u.value = Math.max(0, u.value - dt * 4); // quick fade to black
       return;
     }
+    if (level !== lastLevel.current) {
+      // Brighter: sputter back to life. Dimmer: gutter out.
+      if (level > lastLevel.current) since.current = 0;
+      lastLevel.current = level;
+    }
     const t = since.current;
     const flicker = t < 0.7 ? (Math.random() < 0.35 ? 0.25 : 1) * Math.min(1, t * 2.5) : 1;
-    u.value += (flicker - u.value) * Math.min(1, dt * (t < 0.7 ? 30 : 6));
+    const target = level > 0 ? flicker : 0; // which lamps burn is in the light map
+    u.value += (target - u.value) * Math.min(1, dt * (t < 0.7 ? 30 : level < u.value ? 1.5 : 6));
   });
   return null;
 }
 
-// ---- A placed model (house or lamp) ----
+// ---- A placed model (house, lamp, prop, townsfolk) ----
 
-function Model({ url, scale }) {
+export function Model({ url, scale }) {
   const { scene } = useGLTF(url, false);
 
   const model = useMemo(() => {
@@ -271,7 +302,7 @@ function Lamp({ lamp }) {
 }
 
 // Suspends until every model has loaded, so the whole town appears at once.
-export default function Town({ lampsOn = true }) {
+export default function Town({ lampsOn = true, lampLevel = 1 }) {
   const { houses, lamps } = getTownLayout();
   const res = useMemo(() => {
     const mud = createMudTextures(512);
@@ -294,8 +325,9 @@ export default function Town({ lampsOn = true }) {
       {lamps.map((l, i) => (
         <Lamp key={`l${i}`} lamp={l} />
       ))}
-      <LanternGlow />
-      <LampSwitch on={lampsOn} />
+      <LanternGlow count={litCountFor(lampLevel)} />
+      <LampMap count={litCountFor(lampLevel)} />
+      <LampSwitch on={lampsOn} level={litCountFor(lampLevel) / Math.max(1, LANTERNS.length)} />
     </group>
   );
 }

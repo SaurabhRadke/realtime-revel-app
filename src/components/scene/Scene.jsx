@@ -15,6 +15,8 @@ import Torch from "./Torch";
 import LightPool from "./LightPool";
 import NameTag from "./NameTag";
 import Treasure from "./Treasure";
+import Props from "./Props";
+import { game, lampLevel } from "./game";
 import { roster } from "./roster";
 import { QUALITY_TIERS, START_POSITION } from "./config";
 import styles from "./Scene.module.css";
@@ -57,6 +59,7 @@ function LoadingScreen({ ready }) {
 
 export default function Scene({ lampsOn = true, thirdPerson = false }) {
   const players = useSyncExternalStore(roster.subscribe, roster.getSnapshot, roster.getSnapshot);
+  const lamps = useSyncExternalStore(game.subscribe, () => lampLevel(game.getSnapshot()), () => 1);
   const [tier, setTier] = useState(guessInitialTier);
   const [ready, setReady] = useState(false);
   const q = QUALITY_TIERS[tier];
@@ -84,7 +87,8 @@ export default function Scene({ lampsOn = true, thirdPerson = false }) {
           <NightSky />
           <Field bladeCount={q.blades} />
           <Road />
-          <Town lampsOn={lampsOn} />
+          <Town lampsOn={lampsOn} lampLevel={lamps} />
+          <Props />
 
           <PlayerController thirdPerson={thirdPerson} />
           <LightPool />

@@ -1,0 +1,25 @@
+.tw {
+  white-space: pre-wrap;
+}
+
+/* The untyped rest keeps its space (no layout jump) but can't be seen. */
+.rest {
+  visibility: hidden;
+}
+
+.caret {
+  display: inline-block;
+  width: 0.08em;
+  min-width: 2px;
+  height: 1em;
+  margin: 0 1px -0.12em;
+  background: currentColor;
+  opacity: 0.85;
+  animation: caret 0.8s steps(2, jump-none) infinite;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}

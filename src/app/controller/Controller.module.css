@@ -190,25 +190,36 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+
+/* Top strip (landscape): you + link status | objective | stats, one row. */
+.top {
+  flex: none;
+  display: flex;
+  align-items: center;
   gap: 10px;
-  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
-    max(14px, env(safe-area-inset-left));
+  min-width: 0;
 }
 
 .bar {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .me {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  min-height: 48px;
-  padding: 4px 14px 4px 6px;
+  max-width: 190px;
+  min-height: 42px;
+  padding: 3px 12px 3px 5px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 10%, rgba(10, 10, 16, 0.6));
@@ -220,8 +231,8 @@
 
 .meDot {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #fff6d8, var(--accent) 45%, color-mix(in srgb, var(--accent) 40%, #000) 100%);
   box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 60%, transparent);
@@ -237,7 +248,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .meChar {
@@ -255,10 +266,10 @@
   align-items: center;
   gap: 6px;
   flex: none;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(233, 223, 200, 0.75);
 }
 
@@ -290,15 +301,16 @@
 }
 
 .stats {
+  flex: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(56px, auto));
+  gap: 5px;
 }
 
 .stat {
   display: grid;
   justify-items: center;
-  padding: 8px 4px 6px;
+  padding: 4px 8px 3px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 211, 110, 0.12);
@@ -308,7 +320,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 19px;
+  font-size: 16px;
   line-height: 1.1;
   color: #ffd36e;
   font-variant-numeric: tabular-nums;
@@ -322,13 +334,19 @@
 }
 
 .objective {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   padding: 0 4px;
-  min-height: 2.6em;
-  font-size: 16px;
-  line-height: 1.3;
+  font-size: 14px;
+  line-height: 1.25;
   text-align: center;
   color: #f6eedb;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .objective[data-phase="unlocked"] {
@@ -337,13 +355,14 @@
 }
 
 .result {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 14px;
   background: rgba(255, 211, 110, 0.12);
   border: 1px solid rgba(255, 211, 110, 0.35);
   color: #ffe2a0;
   text-align: center;
-  font-size: 17px;
+  font-size: 15px;
+  line-height: 1.25;
 }
 
 /* ---- Key sense (hot / cold) ---- */
@@ -387,33 +406,79 @@
   animation: pulse 0.8s ease-in-out infinite;
 }
 
-/* ---- Play area: joystick on the left half, look pad on the right half ---- */
+/* ---- Play area (landscape): move zone | buttons | look pad, full height ---- */
 
 .pads {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr minmax(170px, 0.62fr) 1fr;
+  grid-template-areas: "move mid look";
   gap: 10px;
 }
 
+/* The whole left zone is the joystick: the stick centres where the thumb lands. */
 .moveZone {
+  grid-area: move;
+  position: relative;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  overflow: hidden;
+  border-radius: 26px;
+  border: 1.5px dashed rgba(233, 223, 200, 0.1);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: border-color 0.2s;
+}
+
+.moveZone[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .zoneLabel {
-  font-size: 13px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  text-align: center;
+  font-size: 12px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(233, 223, 200, 0.45);
+  color: rgba(233, 223, 200, 0.4);
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.moveZone[data-active="true"] .zoneLabel {
+  opacity: 0;
+}
+
+.middle {
+  grid-area: mid;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 10px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.middle::-webkit-scrollbar {
+  display: none;
+}
+
+.bigBtns {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
 }
 
 .lookPad {
+  grid-area: look;
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -487,20 +552,19 @@
 }
 
 .stick {
-  position: relative;
-  flex: none;
-  width: min(40vw, 36dvh, 240px);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(62dvh, 28vw, 220px);
   aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
   border-radius: 50%;
   background:
     radial-gradient(circle, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 62%),
     radial-gradient(circle, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015) 70%);
   border: 1.5px solid color-mix(in srgb, var(--accent) 35%, rgba(233, 223, 200, 0.2));
   box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5), 0 0 30px color-mix(in srgb, var(--accent) 10%, transparent);
-  touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
 }
 
 .stickRing,
@@ -585,22 +649,15 @@
   }
 }
 
-.stick[data-active="true"] .knob {
+.moveZone[data-active="true"] .knob {
   transition: none;
 }
 
-.stick[data-active="true"] {
+.moveZone[data-active="true"] .stick {
   border-color: var(--accent);
 }
 
-/* ---- Dock ---- */
-
-.dock {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-}
+/* ---- Buttons (middle column) ---- */
 
 .round {
   display: grid;
@@ -674,14 +731,15 @@
   justify-content: center;
   flex-wrap: wrap;
   gap: 6px;
+  max-width: 100%;
 }
 
 .pill {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 38px;
-  padding: 0 12px;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid rgba(233, 223, 200, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
@@ -706,14 +764,17 @@
 }
 
 .startBtn {
-  align-self: center;
-  width: min(360px, 100%);
+  min-width: 0;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  font-size: 18px;
 }
 
 .nearToast {
   position: absolute;
   left: 50%;
-  top: calc(max(10px, env(safe-area-inset-top)) + 58px);
+  top: calc(max(8px, env(safe-area-inset-top)) + 50px);
   transform: translateX(-50%);
   max-width: calc(100% - 28px);
   padding: 8px 16px;
@@ -930,91 +991,606 @@
   color: rgba(233, 223, 200, 0.6);
 }
 
-/* Short screens (small phones, or keyboard-shortened viewports). */
-@media (max-height: 640px) and (orientation: portrait) {
-  .live {
-    gap: 6px;
-  }
+/* ---- "Turn your phone sideways" (portrait only) ---- */
 
-  .statVal {
-    font-size: 16px;
-  }
+.rotate {
+  display: none;
+}
 
-  .roundIcon {
-    width: 50px;
-    height: 50px;
-  }
-
-  .roundBig .roundIcon {
-    width: 56px;
-    height: 56px;
-  }
-
-  .objective {
-    min-height: 0;
-    font-size: 14px;
+@media (orientation: portrait) {
+  .rotate {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    text-align: center;
+    background: rgba(5, 6, 11, 0.94);
   }
 }
 
-/* Landscape (the natural way to hold a two-thumb controller): header and
-   stats share a row, the play area gets the height. */
-@media (orientation: landscape) and (max-height: 520px) {
-  .live {
-    gap: 5px;
-    padding-top: max(6px, env(safe-area-inset-top));
-    padding-bottom: max(6px, env(safe-area-inset-bottom));
-  }
+.rotatePhone {
+  width: 54px;
+  height: 92px;
+  border: 3px solid #ffd36e;
+  border-radius: 12px;
+  box-shadow: 0 0 24px rgba(255, 211, 110, 0.3);
+  animation: turn 2.2s ease-in-out infinite;
+}
 
-  .bar {
-    position: absolute;
-    top: max(6px, env(safe-area-inset-top));
-    left: max(14px, env(safe-area-inset-left));
-    right: 52%;
+@keyframes turn {
+  0%,
+  20% {
+    transform: rotate(0deg);
   }
-
-  .stats {
-    margin-left: 50%;
+  50%,
+  80% {
+    transform: rotate(-90deg);
   }
-
-  .me {
-    min-height: 40px;
+  100% {
+    transform: rotate(0deg);
   }
+}
 
-  .meDot {
-    width: 28px;
-    height: 28px;
+.rotateTitle {
+  margin: 8px 0 0;
+  font-size: 26px;
+  color: #f6eedb;
+}
+
+.rotateText {
+  max-width: 280px;
+  margin: 0;
+  color: rgba(233, 223, 200, 0.7);
+}
+
+.rotateSkip {
+  margin-top: 10px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid rgba(233, 223, 200, 0.25);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(233, 223, 200, 0.8);
+  font-family: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* Small landscape phones: tighter top strip, slimmer middle column. */
+@media (orientation: landscape) and (max-height: 430px) {
+  .meChar,
+  .rtt,
+  .statLabel {
+    display: none;
   }
 
   .stat {
-    padding: 4px 2px;
+    padding: 5px 7px;
   }
 
-  .statVal {
-    font-size: 16px;
+  .stats {
+    grid-template-columns: repeat(4, auto);
   }
 
-  .objective,
-  .result {
-    min-height: 0;
-    font-size: 14px;
-    padding: 2px 4px;
+  .objective {
+    font-size: 13px;
   }
 
-  .stick {
-    width: min(30vw, 52dvh, 220px);
+  .pads {
+    grid-template-columns: 1fr minmax(150px, 0.55fr) 1fr;
+    gap: 8px;
+  }
+
+  .middle {
+    gap: 6px;
   }
 
   .roundIcon,
   .roundBig .roundIcon {
-    width: 48px;
-    height: 48px;
+    width: 52px;
+    height: 52px;
   }
 
   .roundLabel {
-    display: none;
+    font-size: 11px;
   }
 
-  .nearToast {
-    top: calc(max(6px, env(safe-area-inset-top)) + 52px);
+  .pill {
+    min-height: 32px;
+    font-size: 12px;
+  }
+
+  .pill svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .lookHint {
+    font-size: 13px;
+  }
+}
+
+/* Portrait fallback ("Keep it upright"): stacked, pads share the width. */
+@media (orientation: portrait) {
+  .top {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .objective {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .stats {
+    order: 4;
+    flex: 1 1 100%;
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .bar {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .pads {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "move look"
+      "mid mid";
+  }
+
+  .stick {
+    width: min(40vw, 34dvh, 220px);
+  }
+
+  .middle {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .startBtn {
+    width: 100%;
+  }
+}
+
+/* ---- Mission picker (lobby, results) ---- */
+
+.modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+
+.modeBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 3px 6px 3px 3px;
+  border: 1px solid rgba(233, 223, 200, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e9dfc8;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modeBtn[data-on="true"] {
+  border-color: #ffd36e;
+  background: rgba(255, 211, 110, 0.12);
+  box-shadow: 0 0 14px rgba(255, 211, 110, 0.18);
+}
+
+.modeBtn img {
+  flex: none;
+  object-fit: contain;
+}
+
+.modeBtn span {
+  display: grid;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.modeBtn b {
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.05;
+  color: #f6eedb;
+}
+
+.modeBtn[data-on="true"] b {
+  color: #ffd36e;
+}
+
+.modeBtn small {
+  font-size: 10px;
+  color: rgba(233, 223, 200, 0.55);
+}
+
+/* The middle column is narrow on phones: titles only. */
+.middle .modeBtn small {
+  display: none;
+}
+
+.middle .modeBtn img {
+  width: 24px;
+  height: 24px;
+}
+
+/* ---- Talk ---- */
+
+.talkBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 50px;
+  padding: 4px 14px 4px 5px;
+  border: 1.5px solid var(--c);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 16%, rgba(10, 10, 16, 0.7));
+  color: #f6eedb;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  box-shadow: 0 0 22px color-mix(in srgb, var(--c) 35%, transparent);
+  cursor: pointer;
+  animation: talkPulse 1.6s ease-in-out infinite;
+}
+
+.talkBtn img {
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+  object-fit: cover;
+}
+
+.talkBtn b {
+  font-weight: 400;
+  color: var(--c);
+}
+
+@keyframes talkPulse {
+  50% {
+    box-shadow: 0 0 6px color-mix(in srgb, var(--c) 20%, transparent);
+  }
+}
+
+.talkSheet {
+  position: fixed;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: 36%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) 14px;
+  border-left: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+  background:
+    radial-gradient(80% 60% at 0% 0%, color-mix(in srgb, var(--c) 16%, transparent), transparent 70%),
+    rgba(9, 9, 15, 0.95);
+  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.5);
+  color: #e9dfc8;
+  animation: talkIn 0.3s cubic-bezier(0.2, 1.1, 0.4, 1);
+}
+
+@keyframes talkIn {
+  from {
+    transform: translateX(30px);
+    opacity: 0;
+  }
+}
+
+.talkHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.talkPortrait {
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  background: #14121c;
+  object-fit: cover;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--c) 40%, transparent);
+}
+
+.talkWho {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.talkWho b {
+  font-weight: 400;
+  font-size: 20px;
+  color: var(--c);
+}
+
+.talkWho small {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(233, 223, 200, 0.55);
+}
+
+.talkGold {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 211, 110, 0.1);
+  color: #ffd36e;
+  font-size: 15px;
+}
+
+.talkText {
+  margin: 0;
+  min-height: 3.6em;
+  font-size: 17px;
+  line-height: 1.35;
+  color: #f8efd8;
+}
+
+.talkOptions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  align-content: start;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.talkOptions[data-shown="true"] {
+  opacity: 1;
+}
+
+.talkOption {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 46px;
+  padding: 6px 12px;
+  border: 1px solid rgba(233, 223, 200, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f6eedb;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.talkOption > span:first-child {
+  flex: 1;
+}
+
+.talkOption:active:not(:disabled) {
+  background: color-mix(in srgb, var(--c) 20%, transparent);
+}
+
+.talkOption:disabled {
+  opacity: 0.45;
+}
+
+.talkCost {
+  color: #ffd36e;
+}
+
+.talkOption small {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: rgba(233, 223, 200, 0.55);
+}
+
+/* ---- Boosts / carrying ---- */
+
+.boosts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.boost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(159, 228, 255, 0.35);
+  background: rgba(127, 216, 255, 0.08);
+  color: #dff4ff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.boost[data-kind="carry"] {
+  border-color: rgba(159, 228, 255, 0.7);
+  background: rgba(127, 216, 255, 0.18);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.boost[data-low="true"] {
+  animation: pulse 0.6s ease-in-out infinite;
+}
+
+/* ---- Briefing ---- */
+
+.brief {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(90% 60% at 0% 0%, rgba(255, 190, 90, 0.12), transparent 60%),
+    linear-gradient(180deg, #12101a, #08080d);
+  color: #e9dfc8;
+  animation: fade 0.3s ease-out;
+}
+
+.briefScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 10px max(18px, env(safe-area-inset-left));
+  -webkit-overflow-scrolling: touch;
+}
+
+.briefTitle {
+  margin: 2px 0 8px;
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1;
+  color: #f8efd8;
+  text-shadow: 0 0 24px rgba(255, 200, 100, 0.3);
+}
+
+.briefStory {
+  margin: 0 0 10px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.briefGoals {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px;
+}
+
+.briefGoals li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 14px;
+  line-height: 1.3;
+  color: #f6eedb;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.briefGoals li[data-shown="true"] {
+  opacity: 1;
+}
+
+.goalImg {
+  flex: none;
+  object-fit: contain;
+}
+
+.goalGlyph {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #f4ffd0 0%, rgba(200, 255, 122, 0.6) 30%, transparent 70%);
+}
+
+.goalGlyph[data-icon="torch"] {
+  background: radial-gradient(circle at 30% 60%, #fff4c4 0%, rgba(255, 215, 114, 0.6) 30%, transparent 70%);
+}
+
+.briefFolk {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px;
+  opacity: 0.15;
+  transition: opacity 0.5s;
+}
+
+.briefFolk[data-shown="true"] {
+  opacity: 1;
+}
+
+.folk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: rgba(233, 223, 200, 0.85);
+}
+
+.folk img {
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--c);
+  object-fit: cover;
+}
+
+.folk b {
+  font-weight: 400;
+  color: var(--c);
+}
+
+.briefFoot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px max(18px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  border-top: 1px solid rgba(255, 211, 110, 0.15);
+  background: rgba(8, 8, 13, 0.9);
+}
+
+.briefWait {
+  flex: 1;
+  font-size: 14px;
+  color: rgba(233, 223, 200, 0.65);
+  font-variant-numeric: tabular-nums;
+}
+
+.readyBtn {
+  min-width: 190px;
+  min-height: 50px;
+}
+
+.readyBtn[data-on="true"] {
+  background: rgba(168, 240, 160, 0.15);
+  color: #a8f0a0;
+  box-shadow: none;
+  opacity: 1;
+}
+
+@media (orientation: portrait) {
+  .talkSheet {
+    top: 30%;
+    left: 0;
+    border-left: 0;
+    border-top: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+    border-radius: 22px 22px 0 0;
+  }
+
+  .briefFoot {
+    flex-wrap: wrap;
+  }
+
+  .readyBtn {
+    flex: 1 1 100%;
   }
 }

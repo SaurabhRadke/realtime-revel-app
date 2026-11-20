@@ -19,6 +19,46 @@ click **Connect phone**, scan the QR. Both devices must be on the same Wi-Fi.
   Accept the warning once on each device. HTTPS lets the phone keep its screen
   awake (Wake Lock). `npm run dev -- --http` gives plain http, which also works.
 
+## The game
+
+Pick a mission in the lobby (on the screen or any phone), press **Start**. A
+briefing types out the story and the goals; it ends when every player pressed
+**Ready** (or after a minute).
+
+| Mission | Players | Goal |
+| --- | --- | --- |
+| **The Three Keys** | 1–4, everyone for themselves | Coins on the roads; three keys hidden in the dark, revealed only by torchlight (fireflies and the key-sense meter help). All three unlock the chest at the crossroads: first to open it ends the round. Most gold wins. |
+| **Lamps Out** | 1–4, one team | Every street lamp is out. Five oil flasks are hidden like the keys; carry them (one at a time) to Old Wick at the crossroads. Each flask relights the lamps nearest the crossroads first. Light the town, open the chest together; up to three stars for time to spare. |
+
+**Townsfolk** (walk up, press *Talk* on the phone or **E** on the keyboard;
+answers with 1–4 on the keyboard). Each player has their own conversation; the
+big screen shows their lines over their heads, typed out.
+
+- **Old Wick** (crossroads): free hints, "fireflies to the north-east, about 25 paces off". Takes the oil in Lamps Out.
+- **Madame Hollow** (tent, west road): a *vision* for 3 gold, a pillar of light over the nearest hidden prize.
+- **Ember** (cart, east road): a brass compass that floats over you pointing the way (4), torch oil for a brighter, longer beam (2), a swift tonic (3).
+
+Gold is score *and* money, so spending it is a choice.
+
+Code: rules `src/components/scene/game.js`, mission texts `missions.js`,
+townsfolk dialogue `npcs.js`, where everything stands `townProps.js`, the 3D
+side `Props.jsx` + `Treasure.jsx`.
+
+### Models
+
+Source files live in `3d-assets/` (not committed). The game loads web-sized
+copies from `public/models/`:
+
+```bash
+node scripts/optimize-models.mjs   # houses, lamp, moon, torch, characters, collectables
+node scripts/optimize-props.mjs    # 3d-assets/game-assets: townsfolk + props (simplified, WebP)
+```
+
+`optimize-props.mjs` simplifies the meshes (some scans are 500k triangles) and
+writes `src/components/scene/propModels.json`. The signpost and crates are
+generated in code; the UI portraits and item icons in `public/ui/` are renders
+of the game's own models.
+
 ## How it works
 
 ```
@@ -26,7 +66,7 @@ Desktop "/"                 server.mjs (Next + Socket.IO)          Phone "/contr
 host:open ───────────────▶  room "K7QX" + host token
 QR: https://ip:3000/controller?room=K7QX      ◀────────────── controller:join
 ◀──────── WebRTC offer / answer / ICE relayed over the socket ────────▶
-◀═════════ RTCDataChannel (unordered, no retransmits) ═════════ 10-byte input @ 30 Hz
+◀═════════ RTCDataChannel (unordered, no retransmits) ═════════ 10-byte input @ up to 60 Hz
 ◀ ─ ─ ─ ─ ─ socket relay fallback (same bytes) if P2P can't form ─ ─ ─
 ```
 

@@ -8,6 +8,7 @@ import { getPlayerState } from "./player";
 import { glowLight, torchSpots } from "./sharedLights";
 import SCENE_MODELS from "./sceneModels.json";
 import { TORCH, torchUniforms } from "./torchLight";
+import { boostLeft } from "./game";
 
 const TORCH_URL = SCENE_MODELS.find((m) => m.kind === "torch")?.url;
 if (TORCH_URL) useGLTF.preload(TORCH_URL, false);
@@ -68,7 +69,11 @@ function createBeamGeometry() {
 }
 
 function stepTorch(state, dt, refs) {
-  const { holder, beam, player, slot, lead } = refs;
+  const { holder, beam, player, slot, lead, id } = refs;
+  // Ember's torch oil: brighter and further while it lasts (eased in/out).
+  const oiled = boostLeft(id, "oil") > 0 ? 1 : 0;
+  refs.boost.current += (oiled - refs.boost.current) * Math.min(1, dt * 3);
+  const boost = 1 + refs.boost.current * 0.75;
   const h = holder.current;
   if (!h) return;
   const cam = state.camera;
@@ -103,7 +108,7 @@ function stepTorch(state, dt, refs) {
   const spot = torchSpots[slot];
   spot.position.copy(_lens);
   spot.target.copy(player.aim);
-  spot.intensity = TORCH.intensity * on * flicker;
+  spot.intensity = TORCH.intensity * on * flicker * boost;
   if (lead) {
     // The warm spill around the lens: only the solo / first player's torch.
     _lens.set(0, 0, LENS_Z + 0.05);
@@ -115,7 +120,7 @@ function stepTorch(state, dt, refs) {
 
   torchUniforms.uTorchPos.value[slot].copy(_lens);
   torchUniforms.uTorchDir.value[slot].copy(_dir);
-  torchUniforms.uTorchColor.value[slot].set(TORCH.color).multiplyScalar(TORCH.intensity * on * flicker);
+  torchUniforms.uTorchColor.value[slot].set(TORCH.color).multiplyScalar(TORCH.intensity * on * flicker * boost);
 
   // For the treasure hunt: where this beam shines.
   player.lens.copy(_lens);
@@ -125,13 +130,13 @@ function stepTorch(state, dt, refs) {
   // Beam: from the lens, stretched to (a little past) whatever it hits.
   const b = beam.current;
   if (b) {
-    const len = Math.min(16, dist + 1.5);
+    const len = Math.min(16 * boost, dist + 1.5);
     b.position.copy(_lens);
     _q.copy(h.quaternion);
     b.quaternion.copy(_q);
     b.scale.set(len, len, len);
     // Fainter in first person, where the beam starts right in your face.
-    b.material.uniforms.uOpacity.value = (0.06 + 0.07 * e) * on;
+    b.material.uniforms.uOpacity.value = (0.06 + 0.07 * e) * on * (1 + refs.boost.current * 0.8);
     b.visible = on > 0.01;
   }
 }
@@ -188,6 +193,7 @@ export default function Torch({ id, slot = 0, lead = false }) {
 
   const holder = useRef(null);
   const beam = useRef(null);
+  const boost = useRef(0);
 
   // Leaving: switch this slot's light off (the pool keeps the light itself).
   useEffect(
@@ -199,7 +205,7 @@ export default function Torch({ id, slot = 0, lead = false }) {
     [slot, lead],
   );
 
-  useFrame((state, dt) => stepTorch(state, dt, { holder, beam, player, slot, lead }), -1.5);
+  useFrame((state, dt) => stepTorch(state, dt, { holder, beam, player, slot, lead, id, boost }), -1.5);
 
   return (
     <>

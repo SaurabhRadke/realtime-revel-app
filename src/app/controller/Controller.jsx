@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ControllerSession } from "@/lib/connect/controllerSession";
 import { FLAG_RUN, MAX_CHAT, MAX_NAME, ROOM_CODE_RE, cleanText } from "@/lib/connect/protocol";
+import { MODES, MODE_IDS, SHOP, TOWNSFOLK } from "@/components/scene/missions";
+import Typewriter from "@/components/ui/Typewriter";
 import styles from "./Controller.module.css";
 
 const SERVER_SNAP = { status: "idle", error: null, hostOnline: false, transport: "relay", rtt: null };
@@ -21,8 +23,12 @@ const ERRORS = {
 
 const QUICK = ["Over here!", "Found a key!", "Follow me", "Race you!", "Nice!", "👋"];
 
+const PORTRAITS = { wick: "/ui/portraits/wick.webp", hollow: "/ui/portraits/hollow.webp", ember: "/ui/portraits/ember.webp" };
+const FOLK_COLOR = { wick: "#ffd36e", hollow: "#c9a4ff", ember: "#ff9a5a" };
+const GOAL_ICON = { coin: "/ui/icons/coin.webp", key: "/ui/icons/key.webp", oil: "/ui/icons/oil.webp", chest: "/ui/icons/chest.webp" };
+
 // Look pad: radians per CSS pixel swiped (~0.3 degrees), times the chosen speed.
-const LOOK_PER_PX = 0.0054;
+const LOOK_PER_PX = 0.0062;
 const LOOK_Y_SCALE = 0.75; // up/down a bit calmer than turning
 const LOOK_SPEEDS = [0.55, 0.75, 1, 1.3, 1.7];
 
@@ -66,6 +72,16 @@ function storeName(n) {
   } catch {
     // private mode: the name just won't be remembered
   }
+}
+
+// Android Chrome can go fullscreen and lock to landscape (needs the tap that
+// starts the game). iOS can't: the "turn your phone" prompt covers that.
+function goLandscape() {
+  const el = document.documentElement;
+  if (!el.requestFullscreen || document.fullscreenElement) return;
+  el.requestFullscreen({ navigationUI: "hide" })
+    .then(() => screen.orientation?.lock?.("landscape"))
+    .catch(() => {});
 }
 
 const fmt = (ms) => {
@@ -136,50 +152,72 @@ const Icon = {
 };
 
 // ---------- Joystick ----------
-const DEADZONE = 0.12;
+// Floating stick: the whole left zone is touchable and the stick centres on
+// wherever the thumb lands, so there is no reaching for a fixed spot. Full
+// speed comes at the edge of the knob's travel (not past it), with a small
+// deadzone, so it answers to small thumb movements.
+const DEADZONE = 0.08;
+const KNOB_TRAVEL = 0.62; // of the base radius
 
 function Joystick({ onChange, accent }) {
+  const zone = useRef(null);
   const base = useRef(null);
   const knob = useRef(null);
   const active = useRef(null);
+  const origin = useRef({ x: 0, y: 0 });
+  const lastOut = useRef({ x: 0, y: 0 });
+
+  const emit = (x, y) => {
+    if (Math.abs(x - lastOut.current.x) < 0.004 && Math.abs(y - lastOut.current.y) < 0.004 && (x || y)) return;
+    lastOut.current = { x, y };
+    onChange(x, y);
+  };
 
   const update = (e) => {
-    const r = base.current.getBoundingClientRect();
-    const radius = r.width / 2;
-    let dx = (e.clientX - (r.left + radius)) / radius;
-    let dy = (e.clientY - (r.top + radius)) / radius;
+    const pull = (base.current.offsetWidth / 2) * KNOB_TRAVEL;
+    let dx = (e.clientX - origin.current.x) / pull;
+    let dy = (e.clientY - origin.current.y) / pull;
     const len = Math.hypot(dx, dy);
     if (len > 1) {
       dx /= len;
       dy /= len;
     }
-    const travel = radius * 0.6;
-    knob.current.style.transform = `translate(${dx * travel}px, ${dy * travel}px)`;
+    knob.current.style.transform = `translate(${dx * pull}px, ${dy * pull}px)`;
     // Rescale past the deadzone so output still starts from 0 and reaches 1.
     const m = Math.min(1, len);
     const k = m < DEADZONE ? 0 : (m - DEADZONE) / (1 - DEADZONE) / m;
-    onChange(dx * k, -dy * k);
+    emit(dx * k, -dy * k);
   };
 
   const release = (e) => {
     if (active.current !== e.pointerId) return;
     active.current = null;
     knob.current.style.transform = "";
-    base.current.dataset.active = "false";
-    onChange(0, 0);
+    base.current.style.left = "";
+    base.current.style.top = "";
+    zone.current.dataset.active = "false";
+    emit(0, 0);
   };
 
   return (
     <div
-      ref={base}
-      className={styles.stick}
+      ref={zone}
+      className={styles.moveZone}
       style={{ "--accent": accent }}
       data-active="false"
       onPointerDown={(e) => {
         if (active.current !== null) return;
         active.current = e.pointerId;
         e.currentTarget.setPointerCapture(e.pointerId);
-        base.current.dataset.active = "true";
+        // Centre the stick under the thumb, kept fully inside the zone.
+        const z = zone.current.getBoundingClientRect();
+        const r = base.current.offsetWidth / 2;
+        const x = Math.max(z.left + r, Math.min(z.right - r, e.clientX));
+        const y = Math.max(z.top + r, Math.min(z.bottom - r, e.clientY));
+        origin.current = { x, y };
+        base.current.style.left = `${x - z.left}px`;
+        base.current.style.top = `${y - z.top}px`;
+        zone.current.dataset.active = "true";
         update(e);
       }}
       onPointerMove={(e) => active.current === e.pointerId && update(e)}
@@ -188,17 +226,20 @@ function Joystick({ onChange, accent }) {
       onLostPointerCapture={release}
       onContextMenu={(e) => e.preventDefault()}
       role="application"
-      aria-label="Movement joystick"
+      aria-label="Movement joystick: touch anywhere on the left side"
     >
-      <div className={styles.stickRing} />
-      <div className={styles.stickRing2} />
-      <span className={`${styles.tick} ${styles.tickN}`} />
-      <span className={`${styles.tick} ${styles.tickE}`} />
-      <span className={`${styles.tick} ${styles.tickS}`} />
-      <span className={`${styles.tick} ${styles.tickW}`} />
-      <div ref={knob} className={styles.knob}>
-        <span className={styles.knobFlame} />
+      <div ref={base} className={styles.stick}>
+        <div className={styles.stickRing} />
+        <div className={styles.stickRing2} />
+        <span className={`${styles.tick} ${styles.tickN}`} />
+        <span className={`${styles.tick} ${styles.tickE}`} />
+        <span className={`${styles.tick} ${styles.tickS}`} />
+        <span className={`${styles.tick} ${styles.tickW}`} />
+        <div ref={knob} className={styles.knob}>
+          <span className={styles.knobFlame} />
+        </div>
       </div>
+      <span className={styles.zoneLabel}>Move</span>
     </div>
   );
 }
@@ -277,16 +318,152 @@ function LookPad({ onLook, speed }) {
   );
 }
 
-function SenseMeter({ level }) {
+function SenseMeter({ level, label = "Key sense" }) {
   return (
-    <div className={styles.sense} data-level={level} aria-label={`Key sense: ${SENSE[level]}`}>
-      <span className={styles.senseLabel}>Key sense</span>
+    <div className={styles.sense} data-level={level} aria-label={`${label}: ${SENSE[level]}`}>
+      <span className={styles.senseLabel}>{label}</span>
       <span className={styles.senseBars} aria-hidden="true">
         {SENSE.map((_, i) => (
           <span key={i} className={styles.senseBar} data-on={i <= level} />
         ))}
       </span>
       <span className={styles.senseWord}>{SENSE[level]}</span>
+    </div>
+  );
+}
+
+/* eslint-disable @next/next/no-img-element */
+
+// ---------- Missions, briefing, townsfolk ----------
+
+function ModePicker({ mode, onPick }) {
+  return (
+    <div className={styles.modes} role="radiogroup" aria-label="Mission">
+      {MODE_IDS.map((id) => (
+        <button
+          key={id}
+          type="button"
+          role="radio"
+          aria-checked={mode === id}
+          className={styles.modeBtn}
+          data-on={mode === id}
+          onClick={() => onPick(id)}
+        >
+          <img src={id === "lamps" ? GOAL_ICON.oil : GOAL_ICON.key} alt="" width={30} height={30} />
+          <span>
+            <b>{MODES[id].title}</b>
+            <small>{MODES[id].kind}</small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GoalIcon({ icon }) {
+  if (GOAL_ICON[icon]) return <img src={GOAL_ICON[icon]} alt="" width={30} height={30} className={styles.goalImg} />;
+  return <span className={styles.goalGlyph} data-icon={icon} aria-hidden="true" />;
+}
+
+// Full-screen briefing on the phone: typed story, goals, townsfolk, Ready.
+function BriefingSheet({ g, deadline, now, onReady }) {
+  const mode = MODES[g.mode] ?? MODES.hunt;
+  const [step, setStep] = useState(0);
+  const next = () => setStep((v) => v + 1);
+  const left = deadline && now ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
+  return (
+    <div className={styles.brief} role="dialog" aria-modal="true" aria-labelledby="brief-title">
+      <div className={styles.briefScroll}>
+        <p className={styles.kicker}>
+          Mission · {mode.kind} · {mode.minutes} min
+        </p>
+        <h2 id="brief-title" className={styles.briefTitle}>
+          {mode.title}
+        </h2>
+        <p className={styles.briefStory} onClick={() => step === 0 && next()}>
+          <Typewriter text={mode.story} cps={70} onDone={() => step === 0 && next()} />
+        </p>
+        <ol className={styles.briefGoals}>
+          {mode.goals.map((goal, i) => (
+            <li key={goal.text} data-shown={step > i}>
+              <GoalIcon icon={goal.icon} />
+              <span>{step === i + 1 ? <Typewriter text={goal.text} cps={85} onDone={next} /> : step > i + 1 ? goal.text : ""}</span>
+            </li>
+          ))}
+        </ol>
+        <div className={styles.briefFolk} data-shown={step > mode.goals.length}>
+          {TOWNSFOLK.map((t) => (
+            <div key={t.id} className={styles.folk} style={{ "--c": FOLK_COLOR[t.id] }}>
+              <img src={PORTRAITS[t.id]} alt="" width={44} height={44} />
+              <span>
+                <b>{t.name}</b> {t.where}: {t.does}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={styles.briefFoot}>
+        <span className={styles.briefWait}>
+          {g.readyCount}/{g.players} ready{left != null ? ` · starts in ${left}s` : ""}
+        </span>
+        <button type="button" className={`${styles.primary} ${styles.readyBtn}`} data-on={g.ready} disabled={g.ready} onClick={onReady}>
+          {g.ready ? "Ready ✓ waiting…" : "I'm ready"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A conversation with one of the townsfolk: their line types out, then the answers.
+function DialogSheet({ dialog, gold, onChoose, onClose }) {
+  const [doneKey, setDoneKey] = useState(null);
+  const typed = doneKey === dialog.key;
+  return (
+    <section className={styles.talkSheet} style={{ "--c": dialog.color }} aria-label={`Talking with ${dialog.name}`}>
+      <header className={styles.talkHead}>
+        <img src={PORTRAITS[dialog.npc]} alt="" width={52} height={52} className={styles.talkPortrait} />
+        <span className={styles.talkWho}>
+          <b>{dialog.name}</b>
+          <small>{dialog.role}</small>
+        </span>
+        <span className={styles.talkGold}>◉ {gold}</span>
+        <button type="button" className={styles.iconBtn} aria-label="Leave" onClick={onClose}>
+          {Icon.close}
+        </button>
+      </header>
+      <p className={styles.talkText} onClick={() => setDoneKey(dialog.key)}>
+        <Typewriter key={dialog.key} text={dialog.text} cps={55} onDone={() => setDoneKey(dialog.key)} />
+      </p>
+      <div className={styles.talkOptions} data-shown={typed}>
+        {dialog.options.map((o) => (
+          <button key={o.id} type="button" className={styles.talkOption} disabled={o.disabled || !typed} onClick={() => onChoose(o.id)}>
+            <span>{o.label}</span>
+            {o.cost != null && <span className={styles.talkCost}>◉ {o.cost}</span>}
+            {o.note && <small>{o.note}</small>}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BoostChips({ boosts, base, now, carrying }) {
+  const list = Object.entries(boosts ?? {})
+    .map(([k, ms]) => ({ k, left: base + ms - now }))
+    .filter((b) => b.left > 0);
+  if (!list.length && !carrying) return null;
+  return (
+    <div className={styles.boosts}>
+      {carrying && (
+        <span className={styles.boost} data-kind="carry">
+          <img src={GOAL_ICON.oil} alt="" width={18} height={18} /> Carrying oil: to Old Wick!
+        </span>
+      )}
+      {list.map((b) => (
+        <span key={b.k} className={styles.boost} data-low={b.left < 5000}>
+          {SHOP[b.k]?.label ?? b.k} {Math.ceil(b.left / 1000)}s
+        </span>
+      ))}
     </div>
   );
 }
@@ -358,13 +535,13 @@ function StartScreen({ room, name, setName, onStart }) {
       </label>
       <ul className={styles.howto}>
         <li>
-          <b>Left thumb</b>: joystick walks. <b>Right thumb</b>: swipe to look and swing your torch.
+          Hold your phone <b>sideways</b>. <b>Left thumb</b>: touch anywhere and push to walk. <b>Right thumb</b>: swipe to look and swing your torch.
         </li>
         <li>
-          Grab the <b>coins</b>. Follow the <b>fireflies</b> into the dark: a hidden key only shows up in torchlight. Watch your <b>key sense</b>.
+          Grab the <b>coins</b>. Follow the <b>fireflies</b> into the dark: hidden keys and oil only show up in torchlight.
         </li>
         <li>
-          Three keys unlock the <b>chest</b> at the crossroads. First one there takes it.
+          Walk up to the <b>townsfolk</b> and tap Talk: hints, visions and wares for your gold.
         </li>
       </ul>
       <button className={styles.primary} disabled={!cleanText(name, MAX_NAME)}>
@@ -550,6 +727,10 @@ export default function Controller() {
   const [unread, setUnread] = useState(0);
   const [sheet, setSheet] = useState(null); // null | "chat" | "name"
   const [denied, setDenied] = useState(null);
+  const [upright, setUpright] = useState(false); // played in portrait on purpose
+  const [npcNear, setNpcNear] = useState(null); // {id, name, role, color}: who you could talk to
+  const [dialog, setDialog] = useState(null); // your conversation with them
+  const [boostBase, setBoostBase] = useState(0); // Date.now() the boost timers were sent
 
   const sheetRef = useRef(sheet);
   const msgKey = useRef(0);
@@ -579,7 +760,22 @@ export default function Controller() {
             break;
           case "game":
             setGameState(obj);
-            setDeadline(obj.endsIn != null ? Date.now() + obj.endsIn : obj.startsIn != null ? Date.now() + obj.startsIn : null);
+            setDeadline(
+              obj.endsIn != null
+                ? Date.now() + obj.endsIn
+                : obj.startsIn != null
+                  ? Date.now() + obj.startsIn
+                  : obj.briefingIn != null
+                    ? Date.now() + obj.briefingIn
+                    : null,
+            );
+            setBoostBase(Date.now());
+            break;
+          case "npc":
+            setNpcNear(obj.near && typeof obj.near === "object" ? obj.near : null);
+            break;
+          case "dialog":
+            setDialog(obj.npc && Array.isArray(obj.options) ? obj : null);
             break;
           case "sense":
             setSense(Math.max(0, Math.min(SENSE.length - 1, obj.level | 0)));
@@ -602,7 +798,8 @@ export default function Controller() {
   );
 
   // Clock for the round timer (the screen sends the deadline once).
-  const timed = gameState && (gameState.phase === "hunt" || gameState.phase === "unlocked" || gameState.phase === "countdown");
+  const timed =
+    gameState && (gameState.phase === "hunt" || gameState.phase === "unlocked" || gameState.phase === "countdown" || gameState.phase === "briefing");
   useEffect(() => {
     if (!timed) return undefined;
     const tick = () => setNow(Date.now());
@@ -642,6 +839,7 @@ export default function Controller() {
   const playerName = cleanText(name, MAX_NAME) || "Player";
 
   const start = () => {
+    goLandscape();
     storeName(playerName);
     session.join(room, playerName);
     setStarted(true);
@@ -703,100 +901,146 @@ export default function Controller() {
   return (
     <Shell>
       <div className={styles.live} style={{ "--accent": accent }}>
-        <header className={styles.bar}>
-          <button type="button" className={styles.me} onClick={() => setSheet("name")} aria-label={`Rename (${you?.name ?? playerName})`}>
-            <span className={styles.meDot} />
-            <span className={styles.meText}>
-              <span className={styles.meName}>{you?.name ?? playerName}</span>
-              <span className={styles.meChar}>{you?.character ?? "…"}</span>
+        <header className={styles.top}>
+          <div className={styles.bar}>
+            <button type="button" className={styles.me} onClick={() => setSheet("name")} aria-label={`Rename (${you?.name ?? playerName})`}>
+              <span className={styles.meDot} />
+              <span className={styles.meText}>
+                <span className={styles.meName}>{you?.name ?? playerName}</span>
+                <span className={styles.meChar}>{you?.character ?? "…"}</span>
+              </span>
+              <span className={styles.pen}>{Icon.pen}</span>
+            </button>
+            <span className={styles.status} data-kind={live ? snap.transport : "wait"}>
+              <span className={styles.statusDot} />
+              {statusText}
+              {live && snap.rtt != null && <span className={styles.rtt}>{snap.rtt} ms</span>}
             </span>
-            <span className={styles.pen}>{Icon.pen}</span>
-          </button>
-          <span className={styles.status} data-kind={live ? snap.transport : "wait"}>
-            <span className={styles.statusDot} />
-            {statusText}
-            {live && snap.rtt != null && <span className={styles.rtt}>{snap.rtt} ms</span>}
-          </span>
+          </div>
+
+          <p className={styles.objective} data-phase={g?.phase ?? "lobby"}>
+            {g?.phase === "countdown" && deadline && now ? (
+              `Starting in ${Math.max(1, Math.ceil((deadline - now) / 1000))}…`
+            ) : (
+              <Typewriter text={g?.objective ?? "Waiting for the screen…"} cps={60} />
+            )}
+          </p>
+
+          <section className={styles.stats} aria-label="Your hunt">
+            <div className={styles.stat}>
+              <span className={styles.statVal}>◉ {g?.gold ?? 0}</span>
+              <span className={styles.statLabel}>gold</span>
+            </div>
+            <div className={styles.stat}>
+              <span className={styles.statVal}>
+                {g?.mode === "lamps" ? <img src={GOAL_ICON.oil} alt="" width={18} height={18} /> : Icon.key} {g?.keysFound ?? 0}/{g?.keysTotal ?? 3}
+              </span>
+              <span className={styles.statLabel}>{g?.mode === "lamps" ? "lamps lit" : "keys"}</span>
+            </div>
+            <div className={styles.stat}>
+              <span className={styles.statVal}>{running && deadline && now ? fmt(deadline - now) : "–:––"}</span>
+              <span className={styles.statLabel}>moon sets</span>
+            </div>
+            <div className={styles.stat}>
+              <span className={styles.statVal}>{g?.rank ? `#${g.rank}` : "–"}</span>
+              <span className={styles.statLabel}>of {g?.players ?? 1}</span>
+            </div>
+          </section>
         </header>
 
-        <section className={styles.stats} aria-label="Your hunt">
-          <div className={styles.stat}>
-            <span className={styles.statVal}>◉ {g?.gold ?? 0}</span>
-            <span className={styles.statLabel}>gold</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statVal}>
-              {Icon.key} {g?.keysFound ?? 0}/{g?.keysTotal ?? 3}
-            </span>
-            <span className={styles.statLabel}>keys found</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statVal}>{running && deadline && now ? fmt(deadline - now) : "–:––"}</span>
-            <span className={styles.statLabel}>moon sets</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statVal}>{g?.rank ? `#${g.rank}` : "–"}</span>
-            <span className={styles.statLabel}>of {g?.players ?? 1}</span>
-          </div>
-        </section>
-
-        <p className={styles.objective} data-phase={g?.phase ?? "lobby"}>
-          {g?.phase === "countdown" && deadline && now ? `Starting in ${Math.max(1, Math.ceil((deadline - now) / 1000))}…` : (g?.objective ?? "Waiting for the screen…")}
-        </p>
-
-        {g?.phase === "ended" && g.result && (
-          <div className={styles.result}>
-            {g.result.you === 1 ? "You won the hunt! ♛" : `You finished #${g.result.you}. ${g.result.winner} won with ${g.result.winnerGold} gold.`}
-          </div>
-        )}
-
-        {hunting && <SenseMeter level={sense} />}
-
         <section className={styles.pads}>
-          <div className={styles.moveZone}>
-            <Joystick accent={accent} onChange={(x, y) => session.setJoystick(x, y)} />
-            <span className={styles.zoneLabel}>Move</span>
+          <Joystick accent={accent} onChange={(x, y) => session.setJoystick(x, y)} />
+
+          <div className={styles.middle}>
+            {g?.phase === "ended" && g.result && (
+              <div className={styles.result}>
+                {g.mode === "lamps"
+                  ? g.result.lit
+                    ? `Town saved! ${"★".repeat(g.result.stars)}${"☆".repeat(3 - g.result.stars)}`
+                    : "The moon set. So close!"
+                  : g.result.you === 1
+                    ? "You won the hunt! ♛"
+                    : `You finished #${g.result.you}. ${g.result.winner} won with ${g.result.winnerGold} gold.`}
+              </div>
+            )}
+
+            {hunting && !g.carrying && <SenseMeter level={sense} label={g.mode === "lamps" ? "Oil sense" : "Key sense"} />}
+            {running && <BoostChips boosts={g.boosts} base={boostBase} now={now} carrying={g.carrying} />}
+
+            {npcNear && !dialog && (
+              <button type="button" className={styles.talkBtn} style={{ "--c": npcNear.color }} onClick={() => session.action("talk")}>
+                <img src={PORTRAITS[npcNear.id]} alt="" width={34} height={34} />
+                <span>
+                  Talk to <b>{npcNear.name}</b>
+                </span>
+              </button>
+            )}
+
+            {canStart && <ModePicker mode={g.mode ?? "hunt"} onPick={(id) => session.action("mode", id)} />}
+            {canStart && (
+              <button type="button" className={`${styles.primary} ${styles.startBtn}`} onClick={() => session.action(g.phase === "ended" ? "again" : "start")}>
+                {g.phase === "ended" ? "Play again" : "Start the mission"}
+              </button>
+            )}
+
+            <div className={styles.bigBtns}>
+              <RoundButton label={run ? "Sprinting" : "Sprint"} on={run} big onPress={() => setRun((v) => !v)}>
+                {Icon.run}
+              </RoundButton>
+              <RoundButton label={near.length ? "Talk" : "Chat"} on={near.length > 0} big onPress={openChat} badge={unread || null}>
+                {Icon.chat}
+              </RoundButton>
+            </div>
+
+            <nav className={styles.extras} aria-label="Options">
+              <button type="button" className={styles.pill} onClick={() => session.action("character")}>
+                {Icon.character} Character
+              </button>
+              <button type="button" className={styles.pill} data-on={hostState?.lampsOn !== false} onClick={() => session.action("lights")}>
+                {Icon.lamp} {hostState?.lampsOn === false ? "Lamps off" : "Lamps on"}
+              </button>
+              {!party && (
+                <button type="button" className={styles.pill} onClick={() => session.action("view")}>
+                  {Icon.eye} {hostState?.thirdPerson ? "3rd person" : "1st person"}
+                </button>
+              )}
+              <button type="button" className={styles.pill} onClick={cycleSpeed} aria-label={`Look speed ${speed + 1} of ${LOOK_SPEEDS.length}`}>
+                {Icon.look} Look {"●".repeat(speed + 1)}
+                <span className={styles.dim}>{"●".repeat(LOOK_SPEEDS.length - speed - 1)}</span>
+              </button>
+            </nav>
           </div>
+
           <LookPad speed={speed} onLook={(dx, dy) => session.look(dx, dy)} />
         </section>
 
-        <nav className={styles.dock} aria-label="Actions">
-          <RoundButton label={run ? "Sprinting" : "Sprint"} on={run} big onPress={() => setRun((v) => !v)}>
-            {Icon.run}
-          </RoundButton>
-          <div className={styles.extras}>
-            <button type="button" className={styles.pill} onClick={() => session.action("character")}>
-              {Icon.character} Character
-            </button>
-            <button type="button" className={styles.pill} data-on={hostState?.lampsOn !== false} onClick={() => session.action("lights")}>
-              {Icon.lamp} {hostState?.lampsOn === false ? "Lamps off" : "Lamps on"}
-            </button>
-            {!party && (
-              <button type="button" className={styles.pill} onClick={() => session.action("view")}>
-                {Icon.eye} {hostState?.thirdPerson ? "3rd person" : "1st person"}
-              </button>
-            )}
-            <button type="button" className={styles.pill} onClick={cycleSpeed} aria-label={`Look speed ${speed + 1} of ${LOOK_SPEEDS.length}`}>
-              {Icon.look} Look {"●".repeat(speed + 1)}
-              <span className={styles.dim}>{"●".repeat(LOOK_SPEEDS.length - speed - 1)}</span>
-            </button>
-          </div>
-          <RoundButton label={near.length ? "Talk" : "Chat"} on={near.length > 0} big onPress={openChat} badge={unread || null}>
-            {Icon.chat}
-          </RoundButton>
-        </nav>
-
-        {canStart && (
-          <button type="button" className={`${styles.primary} ${styles.startBtn}`} onClick={() => session.action(g.phase === "ended" ? "again" : "start")}>
-            {g.phase === "ended" ? "Play again" : "Start the hunt"}
-          </button>
-        )}
         {near.length > 0 && !canStart && sheet !== "chat" && (
           <button type="button" className={styles.nearToast} onClick={openChat}>
             {near.join(", ")} {near.length > 1 ? "are" : "is"} near: tap to talk
           </button>
         )}
       </div>
+
+      {g?.phase === "briefing" && <BriefingSheet key={g.round} g={g} deadline={deadline} now={now} onReady={() => session.action("ready")} />}
+      {dialog && g?.phase !== "briefing" && (
+        <DialogSheet
+          dialog={dialog}
+          gold={g?.gold ?? 0}
+          onChoose={(id) => session.action("choose", id)}
+          onClose={() => session.action("bye")}
+        />
+      )}
+
+      {!upright && (
+        <div className={styles.rotate} role="dialog" aria-label="Turn your phone sideways">
+          <span className={styles.rotatePhone} aria-hidden="true" />
+          <p className={styles.rotateTitle}>Turn your phone sideways</p>
+          <p className={styles.rotateText}>Joystick under your left thumb, look pad under your right.</p>
+          <button type="button" className={styles.rotateSkip} onClick={() => setUpright(true)}>
+            Keep it upright
+          </button>
+        </div>
+      )}
 
       {sheet === "chat" && (
         <ChatSheet

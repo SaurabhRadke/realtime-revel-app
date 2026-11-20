@@ -15,6 +15,7 @@
 import { CatmullRomCurve3, Vector3 } from "three";
 import { FIELD_RADIUS, MUD_VERGE, ROAD_WIDTH, isOnRoad } from "./config";
 import SCENE_MODELS from "./sceneModels.json";
+import { BLOCKERS } from "./townProps";
 
 const HOUSE_MODELS = SCENE_MODELS.filter((m) => m.kind === "house");
 const LAMP_MODEL = SCENE_MODELS.find((m) => m.kind === "lamp");
@@ -162,6 +163,11 @@ function pathHitsHouse(path, house) {
 
 function fits(candidate, houses) {
   if (corners(candidate, 0.4).some(([x, z]) => Math.hypot(x, z) > FIELD_RADIUS - WALL_MARGIN)) return false;
+  // Keep clear of the fixed set pieces (townsfolk, well, tent, cart...).
+  for (const b of BLOCKERS) {
+    if (insideHouse(candidate, b.x, b.z, b.r + 0.8)) return false;
+    if (candidate.path.points.some(([x, z]) => Math.hypot(x - b.x, z - b.z) < b.r + 0.6)) return false;
+  }
   for (const h of houses) {
     if (housesOverlap(candidate, h, HOUSE_CLEARANCE)) return false;
     if (pathHitsHouse(h.path, candidate) || pathHitsHouse(candidate.path, h)) return false;
@@ -214,8 +220,9 @@ function placeLamps(houses) {
           const x = road === "main" ? side * LAMP_OFFSET : along;
           const z = road === "main" ? along : side * LAMP_OFFSET;
           if (Math.hypot(x, z) > FIELD_RADIUS - 1.5) continue;
-          // Keep path mouths clear.
+          // Keep path mouths and the set pieces clear.
           if (pathMouths.some(([px, pz]) => Math.hypot(px - x, pz - z) < 2.2)) continue;
+          if (BLOCKERS.some((b) => Math.hypot(b.x - x, b.z - z) < b.r + 1.1)) continue;
           // Arms run along the road.
           const yaw = (road === "main" ? Math.PI / 2 : 0) + (Math.random() < 0.5 ? 0 : Math.PI);
           lamps.push({ x, z, yaw, scale, height: LAMP_HEIGHT });
@@ -317,7 +324,8 @@ export function isBlocked(x, z) {
 
 /**
  * Pushes a walker at `pos` (Vector3, XZ used) out of houses (their footprint
- * rectangles) and lamp posts, keeping `radius` of body clearance.
+ * rectangles), the set pieces (townProps.js) and lamp posts, keeping `radius`
+ * of body clearance.
  */
 export function collideWithTown(pos, radius) {
   const { houses, lamps } = getTownLayout();
@@ -334,6 +342,20 @@ export function collideWithTown(pos, radius) {
     const [wx, wz] = rotateY(nx, nz, h.yaw);
     pos.x = h.x + wx;
     pos.z = h.z + wz;
+  }
+  for (const b of BLOCKERS) {
+    const dx = pos.x - b.x;
+    const dz = pos.z - b.z;
+    const d = Math.hypot(dx, dz);
+    const m = b.r + radius;
+    if (d < m) {
+      if (d > 1e-4) {
+        pos.x = b.x + (dx / d) * m;
+        pos.z = b.z + (dz / d) * m;
+      } else {
+        pos.x = b.x + m;
+      }
+    }
   }
   const min = LAMP_RADIUS + radius;
   for (const l of lamps) {

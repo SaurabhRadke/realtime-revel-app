@@ -10,10 +10,12 @@ import { isFresh, remotes } from "./remote";
 import { getPlayers } from "./roster";
 import { CHAT_RADIUS, CHAT_RELEASE, nearOf, setNear } from "./chat";
 import { collideWithTown, isInsideHouse } from "./townLayout";
+import { boostLeft } from "./game";
 
 // ---- Movement ----
 const WALK_SPEED = 3.0; // m/s
 const RUN_SPEED = 5.8; // Shift / phone sprint
+const SWIFT_BOOST = 1.45; // Ember's swift tonic
 const KEY_TURN_SPEED = 1.9; // rad/s, ← → arrows
 const BODY_RADIUS = 0.35;
 const PLAYER_GAP = 0.75; // characters don't walk through each other
@@ -44,10 +46,10 @@ const PARTY_TORCH_PITCH = -0.32; // resting torch tilt: lights the ground a few 
 const PARTY_AIM_MAX = 20;
 
 // ---- Phone look pad (right half of the phone, swiped like a mobile shooter) ----
-// Packets come at 30 Hz; the queued turn is eased in over a few frames so the
-// view glides instead of stepping. Solo: it turns the camera. Party (fixed
+// Packets come at up to 60 Hz; the queued turn is eased in over a couple of
+// frames so the view glides instead of stepping. Solo: it turns the camera. Party (fixed
 // overhead camera): it swings that player's torch.
-const LOOK_EASE = 22; // 1/s: ~90% of a swipe lands within 0.1 s
+const LOOK_EASE = 40; // 1/s: ~90% of a swipe lands within ~0.06 s
 const PARTY_PITCH_RANGE = [-1.05, 0.12]; // torch: down at the feet .. just over the horizon
 const PARTY_LOOK_HOLD = 2500; // ms after the last swipe before the torch follows the walk again
 
@@ -119,7 +121,7 @@ function thirdPersonPosition(out, pivot, yaw, pitch, distance, shoulder) {
 }
 
 // One character's movement for this frame.
-function stepBody(p, r, dt, { keyboard, partyMode }) {
+function stepBody(p, r, dt, { keyboard, partyMode, id }) {
   // -- Phone: the look pad turns the view (solo) or the torch (party) --
   const steering = stepPhoneLook(p, r, dt, partyMode);
 
@@ -142,8 +144,8 @@ function stepBody(p, r, dt, { keyboard, partyMode }) {
   const cos = Math.cos(frameYaw);
   _move.set(-sin * f + cos * s, 0, -cos * f - sin * s);
   if (_move.lengthSq() > 1) _move.normalize();
-  _move.multiplyScalar(running ? RUN_SPEED : WALK_SPEED);
-  p.velocity.lerp(_move, 1 - Math.exp(-9 * dt));
+  _move.multiplyScalar((running ? RUN_SPEED : WALK_SPEED) * (boostLeft(id, "swift") > 0 ? SWIFT_BOOST : 1));
+  p.velocity.lerp(_move, 1 - Math.exp(-16 * dt)); // quick start/stop: the stick feels direct
 
   _prev.copy(p.position);
   p.position.addScaledVector(p.velocity, dt);
@@ -316,7 +318,7 @@ function stepWorld(state, dt) {
     const p = getPlayerState(e.id, e.slot);
     _states.push(p);
     const r = e.peerId ? remotes.get(e.peerId) : null;
-    stepBody(p, r, dt, { keyboard: !partyMode, partyMode });
+    stepBody(p, r, dt, { keyboard: !partyMode, partyMode, id: e.id });
   }
   if (partyMode) separate(_states);
 

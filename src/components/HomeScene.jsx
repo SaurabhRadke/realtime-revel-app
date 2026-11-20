@@ -5,7 +5,9 @@ import dynamic from "next/dynamic";
 import { CHARACTERS } from "./scene/characters";
 import { setInput } from "./scene/controls";
 import { roster, cyclePlayerCharacter, setPlayerCharacter } from "./scene/roster";
-import { game, startRound } from "./scene/game";
+import { game, getGame, setReady, startRound } from "./scene/game";
+import { choose, closeDialog, dialogOf, npcs, talk } from "./scene/npcs";
+import DialogPanel from "./party/DialogPanel";
 import ConnectPhone, { useHostSession } from "./connect/ConnectPhone";
 import GameHud from "./party/GameHud";
 import ChatBox from "./party/ChatBox";
@@ -165,6 +167,8 @@ export default function HomeScene() {
   const phase = useSyncExternalStore(game.subscribe, () => game.getSnapshot().phase, () => "lobby");
   const party = players.length > 1;
   const lead = players[0];
+  const localId = lead && !lead.peerId && !party ? lead.id : null;
+  const dialog = useSyncExternalStore(npcs.subscribe, () => (localId ? dialogOf(localId) : null), () => null);
 
   // Shortcuts (solo only: with several players the keyboard types in the chat).
   // L lights, C next character, V switch view, Enter start the hunt.
@@ -173,10 +177,32 @@ export default function HomeScene() {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select")) return;
       if (roster.getSnapshot().length > 1) return;
+      const me = roster.getSnapshot()[0];
+      // Talking to the townsfolk: E starts, 1-4 answers, Esc walks off.
+      const d = dialogOf(me.id);
+      if (d) {
+        const n = Number(e.key);
+        if (n >= 1 && n <= d.options.length) {
+          choose(me.id, d.options[n - 1].id);
+          e.preventDefault();
+          return;
+        }
+        if (e.code === "Escape") {
+          closeDialog(me.id);
+          return;
+        }
+      }
+      if (e.code === "KeyE") {
+        talk(me.id);
+        return;
+      }
       if (e.code === "KeyL") setLampsOn((v) => !v);
-      else if (e.code === "KeyC") cyclePlayerCharacter(roster.getSnapshot()[0].id);
+      else if (e.code === "KeyC") cyclePlayerCharacter(me.id);
       else if (e.code === "KeyV") setThirdPerson((v) => !v);
-      else if (e.code === "Enter") startRound();
+      else if (e.code === "Enter") {
+        if (getGame().phase === "briefing") setReady(me.id, true);
+        else startRound();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -214,6 +240,7 @@ export default function HomeScene() {
     <div className={styles.stage}>
       <Scene lampsOn={lampsOn} thirdPerson={thirdPerson} />
       <GameHud />
+      {dialog && <DialogPanel playerId={localId} dialog={dialog} />}
       <div className={styles.toolbar}>
         <ConnectPhone chipClass={styles.chip} labelClass={styles.chipLabel} />
         {!party && lead && <CharacterPicker index={lead.character} onPick={(i) => setPlayerCharacter(lead.id, i)} />}
@@ -230,7 +257,7 @@ export default function HomeScene() {
             <kbd>↓</kbd> walk · <kbd>←</kbd>
             <kbd>→</kbd> turn · <kbd>A</kbd>
             <kbd>D</kbd> side-step · <kbd>Shift</kbd> run · drag to look (the torch follows) · <kbd>V</kbd> view · <kbd>C</kbd>{" "}
-            character · <kbd>L</kbd> lights · <kbd>Enter</kbd> start
+            character · <kbd>E</kbd> talk · <kbd>L</kbd> lights · <kbd>Enter</kbd> start
           </p>
           <div className={styles.pad}>
             <ArrowButton dir="forward" label="Move forward" className={styles.up}>

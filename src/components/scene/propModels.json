@@ -1,0 +1,86 @@
+[
+  {
+    "id": "fortune-teller",
+    "url": "/models/props/fortune-teller.glb",
+    "width": 0.7886,
+    "height": 0.746,
+    "depth": 0.7635
+  },
+  {
+    "id": "lamplighter",
+    "url": "/models/props/lamplighter.glb",
+    "width": 0.8094,
+    "height": 0.7755,
+    "depth": 0.7572
+  },
+  {
+    "id": "cat",
+    "url": "/models/props/cat.glb",
+    "width": 0.8628,
+    "height": 0.9302,
+    "depth": 0.692
+  },
+  {
+    "id": "tent",
+    "url": "/models/props/tent.glb",
+    "width": 0.8452,
+    "height": 0.827,
+    "depth": 0.8231
+  },
+  {
+    "id": "well",
+    "url": "/models/props/well.glb",
+    "width": 0.8717,
+    "height": 0.818,
+    "depth": 0.8871
+  },
+  {
+    "id": "barrels",
+    "url": "/models/props/barrels.glb",
+    "width": 0.7563,
+    "height": 0.8555,
+    "depth": 0.7433
+  },
+  {
+    "id": "flag",
+    "url": "/models/props/flag.glb",
+    "width": 0.5822,
+    "height": 1.1902,
+    "depth": 0.1068
+  },
+  {
+    "id": "jar",
+    "url": "/models/props/jar.glb",
+    "width": 0.6823,
+    "height": 1.0804,
+    "depth": 0.6461
+  },
+  {
+    "id": "compass",
+    "url": "/models/props/compass.glb",
+    "width": 0.3967,
+    "height": 0.548,
+    "depth": 0.0688
+  },
+  {
+    "id": "campfire",
+    "url": "/models/props/campfire.glb",
+    "width": 0.7961,
+    "height": 0.9992,
+    "depth": 0.7539
+  },
+  {
+    "id": "cart",
+    "url": "/models/props/cart.glb",
+    "width": 2.31,
+    "height": 3.9803,
+    "depth": 4.6369
+  },
+  {
+    "id": "bench",
+    "url": "/models/props/bench.glb",
+    "width": 6.6497,
+    "height": 1.8565,
+    "depth": 2.2192
+  }
+]

@@ -11,6 +11,7 @@ import {
   Color,
   DoubleSide,
   DynamicDrawUsage,
+  Box3,
   Group,
   Matrix4,
   Mesh,
@@ -24,19 +25,45 @@ import {
   Vector3,
 } from "three";
 import SCENE_MODELS from "./sceneModels.json";
+import PROP_MODELS from "./propModels.json";
 import { FIELD_RADIUS, MUD_VERGE, ROAD_WIDTH } from "./config";
 import { getPlayerState, playerStates } from "./player";
-import { getPlayers } from "./roster";
-import { COIN_COUNT, KEYS_TOTAL, SENSE_LEVELS, collectCoin, collectKey, game, getGame, openChest, setKeySense, tickGame } from "./game";
+import { MAX_PLAYERS, getPlayers } from "./roster";
+import {
+  COIN_COUNT,
+  KEYS_TOTAL,
+  OIL_TOTAL,
+  SENSE_LEVELS,
+  boostLeft,
+  collectCoin,
+  collectKey,
+  deliverOil,
+  dropOil,
+  game,
+  getGame,
+  isCarrying,
+  openChest,
+  pickOil,
+  setKeySense,
+  targetsTotal,
+  tickGame,
+} from "./game";
+import { VISION_SECS } from "./missions";
+import { wickThanks } from "./npcs";
 import { flashLight } from "./sharedLights";
 import { TORCH } from "./torchLight";
 import { isInsideHouse } from "./townLayout";
+import { NPC_SPOTS, TALK_RADIUS, isNearProp } from "./townProps";
+import { world } from "./world";
 
 const url = (kind) => SCENE_MODELS.find((m) => m.kind === kind)?.url;
+const propUrl = (id) => PROP_MODELS.find((m) => m.id === id)?.url;
 const COIN_URL = url("coin");
 const KEY_URL = url("key");
 const CHEST_URL = url("chest");
-for (const u of [COIN_URL, KEY_URL, CHEST_URL]) if (u) useGLTF.preload(u, false);
+const JAR_URL = propUrl("jar");
+const COMPASS_URL = propUrl("compass");
+for (const u of [COIN_URL, KEY_URL, CHEST_URL, JAR_URL, COMPASS_URL]) if (u) useGLTF.preload(u, false);
 
 // ---- Tuning ----
 const COIN_SIZE = 0.5; // metres across
@@ -53,25 +80,34 @@ const REVEAL_NEAR = 4.5; // a key shows itself to anyone this close...
 const REVEAL_BEAM = 26; // ...or to a torch beam within this range
 const REVEAL_CONE = Math.cos(TORCH.angle * 1.6);
 const REVEAL_HOLD = 4; // seconds a key stays visible after the light leaves it
+const OIL_SIZE = 0.62; // metres tall
+const COMPASS_SIZE = 0.62; // metres across
+const OIL_BOOST_RANGE = 1.7; // torch oil: the beam reveals this much further...
+const OIL_BOOST_CONE = 1.3; // ...and a little wider
+const WICK = NPC_SPOTS.wick;
+const DELIVER_RADIUS = TALK_RADIUS;
+const HIDDEN_MAX = Math.max(KEYS_TOTAL, OIL_TOTAL);
 const ROAD_OUTER = ROAD_WIDTH / 2 + MUD_VERGE;
 // Key sense (hot/cold) thresholds, metres to the nearest hidden key: burning, hot, warm, cool.
 const SENSE_DIST = [5, 10, 17, 26];
 // Fireflies: a swarm around every key, plus decoy swarms over empty dark spots.
 const WISPS_PER_SWARM = 6;
 const DECOYS = 3;
-const SWARMS = KEYS_TOTAL + DECOYS;
+const SWARMS = HIDDEN_MAX + DECOYS;
 const GOLD_COLOR = new Color("#ffd36e");
 const KEY_COLOR = new Color("#ffe7a8");
 const CHEST_COLOR = new Color("#ffb347");
+const OIL_COLOR = new Color("#7fd8ff");
 
 // ---------------------------------------------------------------------------
 // Model prep: one mesh per file, stood up, centred, feet at y = 0, scaled.
 // ---------------------------------------------------------------------------
 function prepModel(scene, { rotateX = 0, size, by = "max", emissive, emissiveIntensity = 0 }) {
   scene.updateMatrixWorld(true);
+  // The biggest mesh in the file (the compass has a few small extra parts).
   let mesh = null;
   scene.traverse((o) => {
-    if (!mesh && o.isMesh) mesh = o;
+    if (o.isMesh && (!mesh || o.geometry.attributes.position.count > mesh.geometry.attributes.position.count)) mesh = o;
   });
   const geometry = mesh.geometry.clone();
   geometry.applyMatrix4(mesh.matrixWorld);
@@ -91,6 +127,32 @@ function prepModel(scene, { rotateX = 0, size, by = "max", emissive, emissiveInt
     material.emissiveIntensity = emissiveIntensity;
   }
   return { geometry, material };
+}
+
+// The compass keeps all its parts (case, dial, needle); its glass is left out
+// (a transmission material, which would render as a hole without the
+// physical renderer's extra pass). Lies flat, ring towards -z, `size` wide.
+function prepCompass(scene, size) {
+  const root = new Group();
+  const inner = scene.clone(true);
+  inner.traverse((o) => {
+    if (!o.isMesh) return;
+    if (o.material.transmission > 0) o.visible = false;
+    o.material = o.material.clone();
+    o.material.metalness = Math.min(o.material.metalness ?? 0, 0.35);
+    if ("transmission" in o.material) o.material.transmission = 0;
+    o.material.emissive = new Color("#3a2a0a");
+    o.material.emissiveIntensity = 0.5;
+  });
+  inner.rotation.x = -Math.PI / 2;
+  root.add(inner);
+  root.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(root);
+  const dims = box.getSize(new Vector3());
+  const c = box.getCenter(new Vector3());
+  inner.position.set(-c.x, -box.min.y, -c.z);
+  root.scale.setScalar(size / dims.x);
+  return root;
 }
 
 function useModel(u, opts) {
@@ -119,13 +181,16 @@ function scatter(count, pick, minGap, tries = 4000) {
     if (!p) continue;
     if (Math.hypot(p.x - CHEST_POS.x, p.z - CHEST_POS.z) < 3.5) continue;
     if (isInsideHouse(p.x, p.z, 0.9)) continue;
+    if (isNearProp(p.x, p.z, 0.9)) continue;
     if (out.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < minGap)) continue;
     out.push(p);
   }
   return out;
 }
 
-function makeRound() {
+function makeRound(mode) {
+  const lamps = mode === "lamps";
+  const hiddenCount = lamps ? OIL_TOTAL : KEYS_TOTAL;
   const maxR = FIELD_RADIUS - 3;
   const coins = scatter(
     COIN_COUNT,
@@ -143,7 +208,9 @@ function makeRound() {
     2.6,
   ).map((p, i) => ({ ...p, px: p.x, pz: p.z, pull: 0, taken: false, takenAt: 0, by: null, y0: 0, spin0: 0, done: false, phase: i * 0.7 }));
 
-  // Keys: three of the four dark quadrants, deep enough off the roads.
+  // Hidden prizes (keys, or oil flasks in Lamps Out): spread over the dark
+  // quadrants between the roads, deep enough off them, one quadrant each
+  // before any quadrant gets a second.
   const quadrants = [
     [1, 1],
     [1, -1],
@@ -151,18 +218,32 @@ function makeRound() {
     [-1, -1],
   ].sort(() => Math.random() - 0.5);
   const keys = [];
-  for (const [sx, sz] of quadrants) {
-    if (keys.length >= KEYS_TOTAL) break;
+  for (let q = 0; keys.length < hiddenCount && q < quadrants.length * 3; q++) {
+    const [sx, sz] = quadrants[q % quadrants.length];
     const [spot] = scatter(
       1,
       () => {
         const x = sx * rand(ROAD_OUTER + 3, maxR - 2);
         const z = sz * rand(ROAD_OUTER + 3, maxR - 2);
+        if (keys.some((k) => Math.hypot(k.x - x, k.z - z) < 13)) return null;
         return Math.hypot(x, z) < maxR - 1 && Math.hypot(x, z) > 9 ? { x, z } : null;
       },
       0,
     );
-    if (spot) keys.push({ ...spot, found: false, foundAt: 0, reveal: 0, litAt: -1e9, announced: false });
+    if (spot) {
+      keys.push({
+        ...spot,
+        kind: lamps ? "oil" : "key",
+        found: false, // key taken, or flask delivered
+        foundAt: 0,
+        reveal: 0,
+        litAt: -1e9,
+        announced: false,
+        carrier: null, // Lamps Out: who carries this flask
+        visionUntil: -1e9,
+        visionColor: new Color("#ffffff"),
+      });
+    }
   }
 
   // Decoy firefly swarms: dark spots that look just like a key's swarm from
@@ -458,22 +539,76 @@ const _o = new Object3D();
 const _v = new Vector3();
 const _at = new Vector3();
 
-function keyIsLit(k, players) {
-  for (const p of players) {
+// Is a hidden prize lit right now? `oiled[j]`: player j's torch burns torch oil.
+function keyIsLit(k, players, oiled, t) {
+  if (t < k.visionUntil) return true;
+  for (let j = 0; j < players.length; j++) {
+    const p = players[j];
     if (Math.hypot(p.position.x - k.x, p.position.z - k.z) < REVEAL_NEAR) return true;
     if (p.torchOn < 0.5) continue;
     _v.set(k.x - p.lens.x, 0.7 - p.lens.y, k.z - p.lens.z);
     const d = _v.length();
-    if (d > REVEAL_BEAM || d < 1e-3) continue;
-    if (_v.dot(p.beamDir) / d > REVEAL_CONE) return true;
+    const range = oiled[j] ? REVEAL_BEAM * OIL_BOOST_RANGE : REVEAL_BEAM;
+    if (d > range || d < 1e-3) continue;
+    const cone = oiled[j] ? Math.cos(TORCH.angle * 1.6 * OIL_BOOST_CONE) : REVEAL_CONE;
+    if (_v.dot(p.beamDir) / d > cone) return true;
   }
   return false;
+}
+
+// Still out there: not taken, not delivered, not in anyone's hands.
+const isHidden = (k) => !k.found && !k.carrier;
+
+/** Nearest hidden prize to a point. */
+function nearestHidden(items, x, z) {
+  let best = null;
+  let bestD = Infinity;
+  for (const k of items.keys) {
+    if (!isHidden(k)) continue;
+    const d = Math.hypot(k.x - x, k.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = k;
+    }
+  }
+  return best ? { item: best, dist: bestD } : null;
+}
+
+// Where a player's compass points: the flask's destination while carrying,
+// the chest once it's open, else the nearest hidden prize.
+function compassTarget(items, playerId, p, s) {
+  if (s.phase === "unlocked") return _v.set(CHEST_POS.x, 0, CHEST_POS.z);
+  if (isCarrying(playerId, s)) return _v.set(WICK.x, 0, WICK.z);
+  const n = nearestHidden(items, p.position.x, p.position.z);
+  return n ? _v.set(n.item.x, 0, n.item.z) : null;
 }
 
 // Per-frame update (outside the component: it mutates three.js objects and
 // the round's item list, which React state is not involved in).
 function stepTreasure(state, rawDt, c) {
-  const { items, sparks, wisps, keyBeamMat, chestBeamMat, coinsRef, keyRefs, keyGlowRefs, chestRef, chestBeam, sparksRef, wispsRef, chestFx, fx, chestDeco, showItems } = c;
+  const {
+    items,
+    sparks,
+    wisps,
+    keyBeamMat,
+    oilBeamMat,
+    visionMats,
+    chestBeamMat,
+    coinsRef,
+    keyRefs,
+    oilRefs,
+    keyGlowRefs,
+    visionRefs,
+    compassRefs,
+    chestRef,
+    chestBeam,
+    sparksRef,
+    wispsRef,
+    chestFx,
+    fx,
+    chestDeco,
+    showItems,
+  } = c;
   const dt = Math.min(rawDt, 0.1);
   const t = state.clock.elapsedTime;
   tickGame();
@@ -481,6 +616,8 @@ function stepTreasure(state, rawDt, c) {
   const running = s.phase === "hunt" || s.phase === "unlocked";
   const entries = getPlayers();
   const players = entries.map((e) => getPlayerState(e.id, e.slot));
+  const nowMs = Date.now();
+  const oiled = entries.map((e) => boostLeft(e.id, "oil", nowMs, s) > 0);
 
   // ---- coins: drift to whoever is close, then pop up in a burst of light ----
   const cm = coinsRef.current;
@@ -551,26 +688,57 @@ function stepTreasure(state, rawDt, c) {
     cm.visible = showItems;
   }
 
-  // ---- keys: hidden until a torch beam (or someone close by) finds them ----
+  // ---- hidden prizes (keys / oil flasks): only a torch beam (or someone
+  // close by, or a seer's vision) shows them ----
+  const lamps = s.mode === "lamps";
+  for (const k of items.keys) {
+    if (k.visionPending) {
+      // Cast from outside the frame loop: start it on this frame's clock.
+      k.visionPending = false;
+      k.visionUntil = t + VISION_SECS;
+    }
+  }
   items.keys.forEach((k, i) => {
-    const mesh = keyRefs.current[i];
+    const mesh = k.kind === "oil" ? oilRefs.current[i] : keyRefs.current[i];
     const glow = keyGlowRefs.current[i];
+    const vis = visionRefs.current[i];
     if (!mesh) return;
-    if (running && !k.found) {
-      if (keyIsLit(k, players)) k.litAt = t;
+
+    // Lamps Out: a carried flask whose carrier left (or the round ended) drops.
+    if (k.carrier && (!isCarrying(k.carrier, s) || !playerStates.has(k.carrier))) {
+      const p = playerStates.get(k.carrier);
+      if (p) {
+        k.x = p.position.x;
+        k.z = p.position.z;
+      }
+      dropOil(k.carrier);
+      k.carrier = null;
+      k.litAt = t;
+    }
+
+    if (running && isHidden(k)) {
+      if (keyIsLit(k, players, oiled, t)) k.litAt = t;
       const target = t - k.litAt < REVEAL_HOLD ? 1 : 0;
       k.reveal += (target - k.reveal) * (1 - Math.exp(-(target ? 6 : 1.5) * dt));
       if (!k.announced && k.reveal > 0.5) {
         // First time anyone lights it: a chime of light so everyone notices.
         k.announced = true;
-        shockwave(fx, t, k.x, k.z, KEY_COLOR, 1.6);
-        flash(fx, t, k.x, 2, k.z, 7, KEY_COLOR, 0.7);
+        const col = k.kind === "oil" ? OIL_COLOR : KEY_COLOR;
+        shockwave(fx, t, k.x, k.z, col, 1.6);
+        flash(fx, t, k.x, 2, k.z, 7, col, 0.7);
         burst(sparks, _at.set(k.x, KEY_HOVER + 0.4, k.z), 24, 1.2, 3);
       }
       if (s.phase === "hunt" && k.reveal > 0.35) {
         for (let j = 0; j < players.length; j++) {
           const p = players[j];
-          if (Math.hypot(p.position.x - k.x, p.position.z - k.z) < KEY_PICK) {
+          if (Math.hypot(p.position.x - k.x, p.position.z - k.z) >= KEY_PICK) continue;
+          if (k.kind === "oil") {
+            if (!pickOil(entries[j])) continue; // hands full
+            k.carrier = entries[j].id;
+            burst(sparks, _at.set(k.x, KEY_HOVER + 0.4, k.z), 40, 2.2, 4);
+            shockwave(fx, t, k.x, k.z, OIL_COLOR, 1.4);
+            flash(fx, t, k.x, 2, k.z, 9, OIL_COLOR, 0.8);
+          } else {
             k.found = true;
             k.foundAt = t;
             collectKey(entries[j]);
@@ -579,32 +747,121 @@ function stepTreasure(state, rawDt, c) {
             shockwave(fx, t, k.x, k.z, GOLD_COLOR, 2.4, 0.15);
             popup(fx, t, k.x, KEY_HOVER + 1.8, k.z, "+5", "#ffe7a8", 1.1);
             flash(fx, t, k.x, 2, k.z, 12, KEY_COLOR, 0.9);
-            break;
+          }
+          break;
+        }
+      }
+    }
+
+    // Carried: bobbing over the carrier's head; delivered at Old Wick.
+    if (k.carrier) {
+      const p = playerStates.get(k.carrier);
+      if (p) {
+        k.x = p.position.x;
+        k.z = p.position.z;
+        k.reveal = 1;
+        if (Math.hypot(p.position.x - WICK.x, p.position.z - WICK.z) < DELIVER_RADIUS) {
+          const e = entries.find((en) => en.id === k.carrier);
+          if (e && deliverOil(e)) {
+            k.found = true;
+            k.foundAt = t;
+            k.carrier = null;
+            wickThanks(e, OIL_TOTAL - getGame().oil.delivered);
+            burst(sparks, _at.set(WICK.x, 2.2, WICK.z), 70, 2.6, 4.5);
+            shockwave(fx, t, WICK.x, WICK.z, OIL_COLOR, 1.8);
+            shockwave(fx, t, WICK.x, WICK.z, GOLD_COLOR, 3, 0.15);
+            popup(fx, t, WICK.x, 3.2, WICK.z, "+3", "#9fe4ff", 1.1);
+            flash(fx, t, WICK.x, 2.5, WICK.z, 14, OIL_COLOR, 1.0);
           }
         }
       }
     }
+
     let sc = k.reveal;
     let y = KEY_HOVER + Math.sin(t * 1.6 + i) * 0.12;
-    if (k.found) {
+    let spin = t * (k.found ? 9 : 1.8) + i;
+    if (k.carrier) {
+      const p = playerStates.get(k.carrier);
+      y = (p?.height ?? 1.7) + 0.62 + Math.sin(t * 3 + i) * 0.06;
+      spin = t * 1.2;
+      sc = 1;
+    } else if (k.found) {
       const f = Math.min(1, (t - k.foundAt) / 0.8);
       sc = (1 - f) * (1 + Math.sin(f * Math.PI) * 0.5);
       y += (1 - (1 - f) ** 2) * 2.4;
+      if (k.kind === "oil") {
+        // Poured into Old Wick's lantern.
+        k.x += (WICK.x - k.x) * Math.min(1, dt * 6);
+        k.z += (WICK.z - k.z) * Math.min(1, dt * 6);
+      }
     }
     mesh.visible = showItems && sc > 0.01;
     mesh.position.set(k.x, y, k.z);
-    mesh.rotation.set(0, t * (k.found ? 9 : 1.8) + i, 0.25);
+    mesh.rotation.set(0, spin, k.kind === "oil" || k.carrier ? 0 : 0.25);
     mesh.scale.setScalar(Math.max(1e-4, sc));
     if (glow) {
-      glow.visible = mesh.visible && !k.found;
+      glow.visible = mesh.visible && isHidden(k);
+      glow.material = k.kind === "oil" ? oilBeamMat : keyBeamMat;
       // Unit-height-3 cylinder centred on its middle: lift it to stand on the ground.
       const h = 0.6 + sc * 1.6;
       glow.scale.set(0.5 + sc * 0.3, h, 0.5 + sc * 0.3);
       glow.position.set(k.x, 1.5 * h, k.z);
     }
+    // A seer's vision: a tall pillar of light in the buyer's colour.
+    if (vis) {
+      const left = k.visionUntil - t;
+      const on = running && isHidden(k) && left > 0;
+      vis.visible = on && showItems;
+      if (on) {
+        const fade = Math.min(1, left / 1.5) * Math.min(1, (VISION_SECS - left) * 3);
+        visionMats[i].uniforms.uOpacity.value = fade;
+        visionMats[i].uniforms.uTime.value = t;
+        visionMats[i].uniforms.uColor.value.copy(k.visionColor);
+        vis.position.set(k.x, 14, k.z);
+      }
+    }
   });
-  keyBeamMat.uniforms.uTime.value = t;
-  keyBeamMat.uniforms.uOpacity.value = 0.6;
+  for (const m of [keyBeamMat, oilBeamMat]) {
+    m.uniforms.uTime.value = t;
+    m.uniforms.uOpacity.value = 0.6;
+  }
+  // Slots this round doesn't use (3 keys vs 5 flasks): hidden.
+  for (let i = 0; i < HIDDEN_MAX; i++) {
+    const k = items.keys[i];
+    if (keyRefs.current[i] && (!k || k.kind !== "key")) keyRefs.current[i].visible = false;
+    if (oilRefs.current[i] && (!k || k.kind !== "oil")) oilRefs.current[i].visible = false;
+    if (!k) {
+      if (keyGlowRefs.current[i]) keyGlowRefs.current[i].visible = false;
+      if (visionRefs.current[i]) visionRefs.current[i].visible = false;
+    }
+  }
+
+  // ---- compasses (Ember's wares): float over the owner's head (or sit low
+  // in the first-person view) and turn to their target ----
+  for (let j = 0; j < MAX_PLAYERS; j++) {
+    const cg = compassRefs.current[j];
+    if (!cg) continue;
+    const e = entries[j];
+    const p = players[j];
+    const left = e && running ? boostLeft(e.id, "compass", nowMs, s) : 0;
+    const target = left > 0 ? compassTarget(items, e.id, p, s) : null;
+    cg.visible = !!target;
+    if (!target) continue;
+    const dx = target.x - p.position.x;
+    const dz = target.z - p.position.z;
+    const yaw = Math.atan2(-dx, -dz); // the compass ring (its 12 o'clock) faces the target
+    const pulse = left < 4000 ? 0.75 + 0.25 * Math.sin(t * 14) : 1;
+    if (p.firstPerson) {
+      // Like a held item: low in the view, flat, turning with the world.
+      _at.set(-0.2, -0.2, -0.55).applyQuaternion(state.camera.quaternion).add(state.camera.position);
+      cg.position.copy(_at);
+      cg.scale.setScalar(0.42 * pulse);
+    } else {
+      cg.position.set(p.position.x, p.height + (isCarrying(e.id, s) ? 1.45 : 0.95) + Math.sin(t * 2.4) * 0.05, p.position.z);
+      cg.scale.setScalar(pulse);
+    }
+    cg.rotation.set(0, yaw, 0);
+  }
 
   // ---- fireflies: the clue. A swarm hovers over every hidden key... and over
   // a few empty spots. They gather in tight once a key is lit. ----
@@ -614,7 +871,7 @@ function stepTreasure(state, rawDt, c) {
     let n = 0;
     items.swarms.forEach((sw, si) => {
       const key = si < items.keys.length ? items.keys[si] : null;
-      const gone = key?.found;
+      const gone = key && !isHidden(key);
       const pull = key ? 1 - 0.65 * key.reveal : 1;
       for (const w of sw.wisps) {
         const a = w.ph + t * w.speed;
@@ -640,9 +897,9 @@ function stepTreasure(state, rawDt, c) {
     chestFx.current.senseClock = 0.25;
     for (let j = 0; j < players.length; j++) {
       let level = 0;
-      if (s.phase === "hunt") {
+      if (s.phase === "hunt" && !isCarrying(entries[j].id, s)) {
         let d = Infinity;
-        for (const k of items.keys) if (!k.found) d = Math.min(d, Math.hypot(players[j].position.x - k.x, players[j].position.z - k.z));
+        for (const k of items.keys) if (isHidden(k)) d = Math.min(d, Math.hypot(players[j].position.x - k.x, players[j].position.z - k.z));
         const band = SENSE_DIST.findIndex((m) => d < m);
         level = band < 0 ? 0 : SENSE_LEVELS - 1 - band;
       }
@@ -695,10 +952,15 @@ function stepTreasure(state, rawDt, c) {
     deco.ring.material.opacity = (hot ? 0.85 : 0.38) + Math.sin(t * (hot ? 6 : 1.6)) * 0.12;
     deco.ring.rotation.y = t * 0.15;
   }
+  const total = targetsTotal(s);
+  const found = lamps ? s.oil.delivered : s.keysFound;
   deco.orbs.forEach((orb, i) => {
     if (!orb) return;
-    const lit = i < s.keysFound && s.phase !== "lobby";
-    orb.material.color.set(lit ? "#ffe7a8" : "#3b4660");
+    orb.visible = i < total;
+    const a = (i / total) * Math.PI * 2 + Math.PI / 2;
+    orb.position.set(Math.cos(a) * 2.2, 0.35, Math.sin(a) * 2.2);
+    const lit = i < found && s.phase !== "lobby";
+    orb.material.color.set(lit ? (lamps ? "#9fe4ff" : "#ffe7a8") : "#3b4660");
     orb.scale.setScalar(lit ? 1 + Math.sin(t * 4 + i) * 0.15 : 0.8);
   });
   if (deco.light) deco.light.intensity = s.phase === "unlocked" ? 9 + Math.sin(t * 5) * 3 : 4;
@@ -710,21 +972,62 @@ function stepTreasure(state, rawDt, c) {
   if (sparksRef.current) sparksRef.current.visible = anySparks;
 }
 
-const ORB_ANGLES = Array.from({ length: KEYS_TOTAL }, (_, i) => (i / KEYS_TOTAL) * Math.PI * 2 + Math.PI / 2);
+const ORB_ANGLES = Array.from({ length: HIDDEN_MAX }, (_, i) => (i / HIDDEN_MAX) * Math.PI * 2 + Math.PI / 2);
 
 export default function Treasure() {
   const g = useSyncExternalStore(game.subscribe, game.getSnapshot, game.getSnapshot);
   const coin = useModel(COIN_URL, { rotateX: Math.PI / 2, size: COIN_SIZE, emissive: "#8a5a00", emissiveIntensity: 0.9 });
   const key = useModel(KEY_URL, { rotateX: -Math.PI / 2, size: KEY_SIZE, by: "y", emissive: "#d09a30", emissiveIntensity: 1.5 });
   const chest = useModel(CHEST_URL, { size: CHEST_SIZE, by: "x", emissive: "#5a3608", emissiveIntensity: 0.75 });
+  const oil = useModel(JAR_URL, { size: OIL_SIZE, by: "y", emissive: "#1b6fa0", emissiveIntensity: 1.1 });
+  const { scene: compassScene } = useGLTF(COMPASS_URL, false);
+  const compasses = useMemo(() => Array.from({ length: MAX_PLAYERS }, () => prepCompass(compassScene, COMPASS_SIZE)), [compassScene]);
+  useEffect(
+    () => () => {
+      for (const c of compasses) c.traverse((o) => o.isMesh && o.material.dispose());
+    },
+    [compasses],
+  );
 
   // New layout every round (and one up front for the lobby's empty world).
-  const items = useMemo(() => makeRound(), [g.round]); // eslint-disable-line react-hooks/exhaustive-deps
+  const items = useMemo(() => makeRound(g.mode), [g.round]); // eslint-disable-line react-hooks/exhaustive-deps
   const showItems = g.phase === "hunt" || g.phase === "unlocked" || g.phase === "countdown";
+
+  // Answer the townsfolk's questions about this round's hidden prizes.
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  useEffect(() => {
+    world.nearestTarget = (playerId) => {
+      const p = playerStates.get(playerId);
+      if (!p) return null;
+      const n = nearestHidden(itemsRef.current, p.position.x, p.position.z);
+      return n ? { x: n.item.x, z: n.item.z, dist: n.dist, kind: n.item.kind, fromX: p.position.x, fromZ: p.position.z } : null;
+    };
+    world.castVision = (playerId) => {
+      const p = playerStates.get(playerId);
+      const e = getPlayers().find((en) => en.id === playerId);
+      if (!p) return false;
+      const n = nearestHidden(itemsRef.current, p.position.x, p.position.z);
+      if (!n) return false;
+      n.item.visionUntil = performance.now() / 1000 + VISION_SECS; // matched to the frame clock below
+      n.item.visionColor.set(e?.color ?? "#ffffff");
+      n.item.visionPending = true;
+      return true;
+    };
+    return () => {
+      world.nearestTarget = () => null;
+      world.castVision = () => false;
+    };
+  }, []);
 
   const coinsRef = useRef(null);
   const keyRefs = useRef([]);
+  const oilRefs = useRef([]);
   const keyGlowRefs = useRef([]);
+  const visionRefs = useRef([]);
+  const compassRefs = useRef([]);
   const chestRef = useRef(null);
   const chestBeam = useRef(null);
   const sparksRef = useRef(null);
@@ -737,6 +1040,8 @@ export default function Treasure() {
   const fx = useMemo(() => createFx(), []);
   const chestBeamMat = useMemo(() => makeBeamMaterial("#ffd36e"), []);
   const keyBeamMat = useMemo(() => makeBeamMaterial("#ffe7a8"), []);
+  const oilBeamMat = useMemo(() => makeBeamMaterial("#8fdcff"), []);
+  const visionMats = useMemo(() => Array.from({ length: HIDDEN_MAX }, () => makeBeamMaterial("#ffffff")), []);
   useEffect(
     () => () => {
       sparks.geometry.dispose();
@@ -746,8 +1051,10 @@ export default function Treasure() {
       disposeFx(fx);
       chestBeamMat.dispose();
       keyBeamMat.dispose();
+      oilBeamMat.dispose();
+      for (const m of visionMats) m.dispose();
     },
-    [sparks, wisps, fx, chestBeamMat, keyBeamMat],
+    [sparks, wisps, fx, chestBeamMat, keyBeamMat, oilBeamMat, visionMats],
   );
 
   useFrame((state, dt) =>
@@ -756,10 +1063,15 @@ export default function Treasure() {
       sparks,
       wisps,
       keyBeamMat,
+      oilBeamMat,
+      visionMats,
       chestBeamMat,
       coinsRef,
       keyRefs,
+      oilRefs,
       keyGlowRefs,
+      visionRefs,
+      compassRefs,
       chestRef,
       chestBeam,
       sparksRef,
@@ -774,16 +1086,36 @@ export default function Treasure() {
   return (
     <>
       <instancedMesh ref={coinsRef} args={[coin.geometry, coin.material, COIN_COUNT]} frustumCulled={false} />
-      {Array.from({ length: KEYS_TOTAL }, (_, i) => (
+      {Array.from({ length: HIDDEN_MAX }, (_, i) => (
         <group key={i}>
+          {i < KEYS_TOTAL && (
+            <mesh
+              ref={(el) => {
+                keyRefs.current[i] = el;
+              }}
+              geometry={key.geometry}
+              material={key.material}
+              visible={false}
+            />
+          )}
           <mesh
             ref={(el) => {
-              keyRefs.current[i] = el;
+              oilRefs.current[i] = el;
             }}
-            geometry={key.geometry}
-            material={key.material}
+            geometry={oil.geometry}
+            material={oil.material}
             visible={false}
           />
+          <mesh
+            ref={(el) => {
+              visionRefs.current[i] = el;
+            }}
+            material={visionMats[i]}
+            visible={false}
+            renderOrder={5}
+          >
+            <cylinderGeometry args={[0.7, 1.1, 28, 24, 1, true]} />
+          </mesh>
           <mesh
             ref={(el) => {
               keyGlowRefs.current[i] = el;
@@ -836,6 +1168,23 @@ export default function Treasure() {
       <mesh ref={chestBeam} material={chestBeamMat} position={[CHEST_POS.x, 6, CHEST_POS.z]} visible={false} renderOrder={5}>
         <cylinderGeometry args={[0.9, 1.3, 12, 32, 1, true]} />
       </mesh>
+
+      {Array.from({ length: MAX_PLAYERS }, (_, j) => (
+        <group
+          key={`compass${j}`}
+          ref={(el) => {
+            compassRefs.current[j] = el;
+          }}
+          visible={false}
+        >
+          <primitive object={compasses[j]} />
+          {/* A glowing pointer, so the heading reads from across the town. */}
+          <mesh position={[0, 0.06, -COMPASS_SIZE * 0.78]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={7}>
+            <coneGeometry args={[0.09, 0.26, 3]} />
+            <meshBasicMaterial color="#ffd36e" toneMapped={false} />
+          </mesh>
+        </group>
+      ))}
 
       <points ref={wispsRef} geometry={wisps.geometry} material={wisps.material} frustumCulled={false} visible={false} />
       <points ref={sparksRef} geometry={sparks.geometry} material={sparks.material} frustumCulled={false} visible={false} />
