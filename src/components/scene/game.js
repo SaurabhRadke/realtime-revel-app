@@ -3,8 +3,9 @@
 //   1. Gold coins are scattered through the town: walk over them (+1 gold).
 //   2. Three old keys are hidden in the dark, off the lamp-lit roads. A key
 //      only shows itself when a torch beam (or someone standing right next
-//      to it) lights it up, so sweep the phone around like a real torch.
-//      Picking one up is +5 gold.
+//      to it) lights it up. Clues: fireflies swarm around every key (and
+//      around a few decoy spots too), and each player's "key sense" meter
+//      runs from cold to burning as they get closer to one. +5 gold.
 //   3. With all three keys found the treasure chest at the crossroads
 //      unlocks. The first to reach it opens it (+10 gold) and ends the round.
 //   4. If the moon sets first (the timer), the round ends where it stands.
@@ -73,7 +74,7 @@ export function objective(s = state) {
     case "countdown":
       return "Get ready…";
     case "hunt":
-      return `Sweep your torch through the dark to find the hidden keys (${s.keysFound}/${KEYS_TOTAL})`;
+      return `Follow the fireflies and light them with your torch: find the hidden keys (${s.keysFound}/${KEYS_TOTAL})`;
     case "unlocked":
       return "The chest is unlocked! Race to the crossroads!";
     case "ended": {
@@ -158,4 +159,25 @@ function endRound(reason, openerId) {
     result: { reason, openerId, ranking: rank },
     toast: toast(reason === "chest" && opener ? `${opener.name} opened the treasure chest!` : "The moon has set!", opener?.color),
   });
+}
+
+// ---- Key sense: per player, how close the nearest hidden key is ----
+// 0 cold .. 4 burning. Written by the scene a few times a second; listeners
+// only hear about actual changes (the phones get one tiny message per step).
+export const SENSE_LEVELS = 5;
+const senseLevels = new Map();
+const senseListeners = new Set();
+
+export const keySense = {
+  subscribe(fn) {
+    senseListeners.add(fn);
+    return () => senseListeners.delete(fn);
+  },
+  get: (playerId) => senseLevels.get(playerId) ?? 0,
+};
+
+export function setKeySense(playerId, level) {
+  if ((senseLevels.get(playerId) ?? 0) === level) return;
+  senseLevels.set(playerId, level);
+  for (const fn of senseListeners) fn(playerId);
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { roster } from "@/components/scene/roster";
 import { CHARACTERS } from "@/components/scene/characters";
-import { KEYS_TOTAL, game, isRunning, objective, ranking, startRound } from "@/components/scene/game";
+import { KEYS_TOTAL, game, isRunning, keySense, objective, ranking, startRound } from "@/components/scene/game";
 import styles from "./GameHud.module.css";
 
 const useGame = () => useSyncExternalStore(game.subscribe, game.getSnapshot, game.getSnapshot);
@@ -24,6 +24,18 @@ function useNow(on, ms = 250) {
     };
   }, [on, ms]);
   return now;
+}
+
+const SENSE = ["Cold", "Cool", "Warm", "Hot", "Burning!"];
+
+// Keyboard player's hot/cold meter (phone players see theirs on the phone).
+function SenseLine({ id }) {
+  const level = useSyncExternalStore(keySense.subscribe, () => keySense.get(id), () => 0);
+  return (
+    <p className={styles.sense} data-level={level}>
+      Key sense: <b>{SENSE[level]}</b>
+    </p>
+  );
 }
 
 const fmt = (ms) => {
@@ -130,6 +142,7 @@ export default function GameHud() {
           )}
         </header>
         <p className={styles.objective}>{objective(g)}</p>
+        {solo && g.phase === "hunt" && <SenseLine id={players[0].id} />}
 
         {(running || g.phase === "countdown" || g.phase === "ended") && (
           <div className={styles.keys} aria-label={`${g.keysFound} of ${KEYS_TOTAL} keys found`}>

@@ -4,18 +4,15 @@
 //   - answers the host's WebRTC offer; sends input over the DataChannel when
 //     it is open, otherwise over the socket relay (same bytes either way)
 //   - streams input at 30 Hz while something changes (the screen smooths
-//     between packets), a 5 Hz keep-alive otherwise; gyro jitter below
-//     ~0.4 degrees doesn't count as a change, so a phone held still is quiet
+//     between packets), a 5 Hz keep-alive otherwise, so an idle phone is quiet
 //   - echoes the host's pings so the host can measure latency
 
 import { io } from "socket.io-client";
 import { Peer } from "./peer";
-import { PKT_PING, PKT_PONG, decode, encodeInput, encodePing } from "./protocol";
+import { LOOK_UNIT, PKT_PING, PKT_PONG, decode, encodeInput, encodePing } from "./protocol";
 
 const SEND_MS = 1000 / 30;
 const KEEPALIVE_MS = 200;
-// |dot(q1, q2)| above this = less than ~0.4 degrees apart: not worth sending.
-const GYRO_DEADBAND = Math.cos(((0.4 * Math.PI) / 180) / 2);
 
 export class ControllerSession {
   #socket = null;
@@ -26,7 +23,6 @@ export class ControllerSession {
   #seq = 0;
   #lastSent = 0;
   #dirty = true;
-  #sentQ = [0, 0, 0, 1];
   #listeners = new Set();
   #msgListeners = new Set();
   #snapshot = {
@@ -37,8 +33,8 @@ export class ControllerSession {
     rtt: null,
   };
 
-  /** Live input, written by the UI (joystick, gyro, buttons), read by the send loop. */
-  input = { q: [0, 0, 0, 1], flags: 0, joyX: 0, joyY: 0 };
+  /** Live input, written by the UI (joystick, look pad, buttons), read by the send loop. */
+  input = { lookX: 0, lookY: 0, flags: 0, joyX: 0, joyY: 0 };
 
   subscribe = (fn) => {
     this.#listeners.add(fn);
@@ -50,7 +46,7 @@ export class ControllerSession {
     for (const fn of this.#listeners) fn();
   }
 
-  /** Messages from the host: {type:"state"|"haptic"|...}. */
+  /** Messages from the host: {type:"state"|"game"|...}. */
   onMessage(fn) {
     this.#msgListeners.add(fn);
     return () => this.#msgListeners.delete(fn);
@@ -71,10 +67,12 @@ export class ControllerSession {
     this.#dirty = true;
   }
 
-  setAttitude(q) {
-    this.input.q = q;
-    const p = this.#sentQ;
-    if (Math.abs(q[0] * p[0] + q[1] * p[1] + q[2] * p[2] + q[3] * p[3]) < GYRO_DEADBAND) this.#dirty = true;
+  /** Swipe on the look pad: radians to turn right (dx) and to look up (dy). */
+  look(dx, dy) {
+    // Running totals in LOOK_UNITs, kept small (the packet wraps them anyway).
+    this.input.lookX = (this.input.lookX + dx / LOOK_UNIT) % 65536;
+    this.input.lookY = (this.input.lookY + dy / LOOK_UNIT) % 65536;
+    this.#dirty = true;
   }
 
   join(roomId, name) {
@@ -137,7 +135,7 @@ export class ControllerSession {
     this.#socket = null;
   }
 
-  /** Reliable button press (lights, view, recenter...). */
+  /** Reliable button press (lights, view, character...). */
   action(name) {
     this.#socket?.emit("msg", { type: "action", name });
   }
@@ -191,7 +189,6 @@ export class ControllerSession {
     this.#dirty = false;
     this.#lastSent = now;
     this.#seq = (this.#seq + 1) & 0xffff;
-    this.#sentQ = this.input.q;
     this.#send(encodeInput({ seq: this.#seq, ...this.input }));
   }
 }

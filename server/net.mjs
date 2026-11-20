@@ -1,8 +1,8 @@
 // Network helpers for the custom server: LAN address discovery (for the QR
 // code) and a cached self-signed certificate for HTTPS in development.
 //
-// Why HTTPS in dev: phones only expose gyroscope data (DeviceOrientationEvent)
-// to secure contexts, and http://192.168.x.x is not one.
+// Why HTTPS in dev: some phone APIs (Wake Lock, keeping the screen on while
+// playing) only work in secure contexts, and http://192.168.x.x is not one.
 
 import fs from "node:fs";
 import os from "node:os";

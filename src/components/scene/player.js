@@ -47,9 +47,6 @@ export function createPlayerState(slot = 0) {
     lens: new Vector3(position.x, 1, position.z),
     beamDir: new Vector3(0, 0, -1),
     torchOn: 0,
-
-    // Phone gyro bookkeeping (PlayerController)
-    phone: { calibration: -1, lastHeading: null, pitchZero: 0, primed: false, q: null, target: null },
   };
 }
 

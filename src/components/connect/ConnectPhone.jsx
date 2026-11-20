@@ -162,7 +162,7 @@ function Overlay({ state, onClose }) {
           {unreachable && <p className={styles.warn}>A phone can&apos;t open localhost. Open this page via your computer&apos;s LAN IP.</p>}
           {selfSigned && (
             <p className={styles.note}>
-              First visit: the phone warns about the dev certificate. Tap <b>Advanced → Proceed</b>. HTTPS is required for the gyroscope.
+              First visit: the phone warns about the dev certificate. Tap <b>Advanced → Proceed</b>.
             </p>
           )}
 

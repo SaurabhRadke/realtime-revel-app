@@ -1,50 +1,52 @@
 // Wire format shared by the phone (controller) and the desktop (host).
 //
-// Input is the only high-rate traffic, so it goes as a fixed 14-byte binary
-// packet instead of JSON: the attitude quaternion is quantised to int16 per
-// component (~0.003 precision, far below what a hand can hold steady) and the
-// joystick to int8. Same bytes over the WebRTC DataChannel or, as a fallback,
-// the Socket.IO relay.
+// Input is the only high-rate traffic, so it goes as a fixed 10-byte binary
+// packet instead of JSON. Looking around (the right half of the phone, swiped
+// like a mobile shooter) travels as two running totals rather than per-packet
+// deltas: a lost or late packet then costs nothing, the next one carries the
+// whole sum. The totals wrap at 16 bits; the host takes the wrapped
+// difference. Same bytes over the WebRTC DataChannel or the Socket.IO relay.
 //
-//   INPUT (14 B)                      PING / PONG (12 B)
+//   INPUT (10 B)                      PING / PONG (12 B)
 //   0  u8   type = 1                  0  u8   type = 2 | 3
 //   1  u8   flags                     1  u8   0
 //   2  u16  seq                       2  u16  id
-//   4  i16  qx  \                     4  f64  sender timestamp (ms)
-//   6  i16  qy   | device attitude
-//   8  i16  qz   | (unit quaternion * 32767, earth frame)
-//   10 i16  qw  /
-//   12 i8   joyX  -127..127 (right +)
-//   13 i8   joyY  -127..127 (forward +)
+//   4  i16  lookX  total turn right   4  f64  sender timestamp (ms)
+//   6  i16  lookY  total look up
+//      (both in LOOK_UNIT radians, wrapping)
+//   8  i8   joyX  -127..127 (right +)
+//   9  i8   joyY  -127..127 (forward +)
 
 export const PKT_INPUT = 1;
 export const PKT_PING = 2;
 export const PKT_PONG = 3;
 
-export const FLAG_GYRO = 1; // quaternion is valid
 export const FLAG_RUN = 2; // sprint is on
-export const FLAG_TORCH = 4; // torch should follow the phone (gyro aiming on)
 
-const INPUT_BYTES = 14;
+/** Radians per look count: 1/4096 rad (~0.014 degrees). */
+export const LOOK_UNIT = 1 / 4096;
+
+const INPUT_BYTES = 10;
 const PING_BYTES = 12;
 
-const q16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v * 32767)));
 const q8 = (v) => Math.max(-127, Math.min(127, Math.round(v * 127)));
 
-export function encodeInput({ seq, flags, q, joyX, joyY }) {
+/** lookX / lookY are the running totals in LOOK_UNITs (any integer; sent mod 2^16). */
+export function encodeInput({ seq, flags, lookX, lookY, joyX, joyY }) {
   const buf = new ArrayBuffer(INPUT_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, PKT_INPUT);
   v.setUint8(1, flags);
   v.setUint16(2, seq & 0xffff, true);
-  v.setInt16(4, q16(q[0]), true);
-  v.setInt16(6, q16(q[1]), true);
-  v.setInt16(8, q16(q[2]), true);
-  v.setInt16(10, q16(q[3]), true);
-  v.setInt8(12, q8(joyX));
-  v.setInt8(13, q8(joyY));
+  v.setUint16(4, Math.round(lookX) & 0xffff, true);
+  v.setUint16(6, Math.round(lookY) & 0xffff, true);
+  v.setInt8(8, q8(joyX));
+  v.setInt8(9, q8(joyY));
   return buf;
 }
+
+/** Signed difference of two wrapped 16-bit look totals. */
+export const lookDelta = (now, before) => (((now - before) << 16) >> 16);
 
 export function encodePing(type, id, time) {
   const buf = new ArrayBuffer(PING_BYTES);
@@ -68,14 +70,14 @@ export function decode(data) {
   if (!v || v.byteLength < 1) return null;
   const type = v.getUint8(0);
   if (type === PKT_INPUT && v.byteLength >= INPUT_BYTES) {
-    const q = [v.getInt16(4, true) / 32767, v.getInt16(6, true) / 32767, v.getInt16(8, true) / 32767, v.getInt16(10, true) / 32767];
     return {
       type,
       flags: v.getUint8(1),
       seq: v.getUint16(2, true),
-      q,
-      joyX: v.getInt8(12) / 127,
-      joyY: v.getInt8(13) / 127,
+      lookX: v.getUint16(4, true),
+      lookY: v.getUint16(6, true),
+      joyX: v.getInt8(8) / 127,
+      joyY: v.getInt8(9) / 127,
     };
   }
   if ((type === PKT_PING || type === PKT_PONG) && v.byteLength >= PING_BYTES) {
@@ -96,7 +98,7 @@ export const ROOM_CODE_RE = /^[A-Z2-9]{4}$/;
 // ---- Reliable JSON messages (over the socket "msg" event) ----
 //
 // phone -> screen
-//   {type:"action", name}          lights | view | character | recenter | start | again
+//   {type:"action", name}          lights | view | character | start | again
 //   {type:"chat", text}            say something (only lands if someone is near)
 //   {type:"rename", name}
 // screen -> phone
@@ -105,6 +107,7 @@ export const ROOM_CODE_RE = /^[A-Z2-9]{4}$/;
 //   {type:"you", name, character, accent, color}
 //   {type:"game", phase, gold, keys, keysTotal, rank, players, endsIn, objective, result?}
 //   {type:"near", names:[...]}     who is inside your chat circle right now
+//   {type:"sense", level}          0 (cold) .. 4 (hot): how close the nearest hidden key is
 //   {type:"chat", from, text, self}
 //   {type:"chat:denied"}
 

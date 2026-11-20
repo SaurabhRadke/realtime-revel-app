@@ -17,7 +17,7 @@ import {
   renamePlayer,
   roster,
 } from "@/components/scene/roster";
-import { KEYS_TOTAL, game, getGame, isRunning, objective, rankOf, resetToLobby, scoreOf, startRound } from "@/components/scene/game";
+import { KEYS_TOTAL, game, getGame, isRunning, keySense, objective, rankOf, resetToLobby, scoreOf, startRound } from "@/components/scene/game";
 import { chat, forgetPlayer, nearOf, say } from "@/components/scene/chat";
 import { MAX_NAME, cleanText } from "@/lib/connect/protocol";
 
@@ -135,9 +135,14 @@ export function startPartyHost(host) {
   const offChat = chat.subscribe(() => {
     for (const e of getPlayers()) if (e.peerId) syncNear(host, e);
   });
+  const offSense = keySense.subscribe((id) => {
+    const e = getPlayer(id);
+    if (e?.peerId) sendOnce(host, e.peerId, { type: "sense", level: keySense.get(id) });
+  });
   syncAll();
 
   return () => {
+    offSense();
     offAction();
     offRoster();
     offGame();

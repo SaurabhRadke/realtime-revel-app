@@ -35,8 +35,7 @@ const AIM_NDC = new Vector2(0, -0.08); // the torch points where you look, just 
 
 // ---- Party camera (several players share the screen) ----
 // High, fixed-heading view that frames everyone. Joysticks move relative to
-// it ("up" = into the screen) and pointing the phone at the screen points
-// the torch into the town.
+// it ("up" = into the screen); swiping the phone's look pad swings the torch.
 const PARTY_YAW = 0;
 const PARTY_PITCH = -0.95; // ~54 degrees down
 const PARTY_MIN_DIST = 12;
@@ -44,15 +43,13 @@ const PARTY_MAX_DIST = 70;
 const PARTY_TORCH_PITCH = -0.32; // resting torch tilt: lights the ground a few metres ahead
 const PARTY_AIM_MAX = 20;
 
-// ---- Phone (gyro) aiming ----
-// The phone's top edge is the torch. Its heading turns the view/torch
-// incrementally (so keys and joystick still work alongside), its tilt sets
-// the pitch relative to the tilt captured at calibration. Gains below 1 make
-// it calmer: a 10 degree wrist turn moves the torch ~6 degrees.
-const PHONE_SMOOTHING = 14; // 1/s, slerp rate towards the latest packet
-const PHONE_YAW_GAIN = 0.6;
-const PHONE_PITCH_GAIN = 0.6;
-const PHONE_YAW_DEADBAND = 0.0025; // rad per frame: hand tremor, ignored
+// ---- Phone look pad (right half of the phone, swiped like a mobile shooter) ----
+// Packets come at 30 Hz; the queued turn is eased in over a few frames so the
+// view glides instead of stepping. Solo: it turns the camera. Party (fixed
+// overhead camera): it swings that player's torch.
+const LOOK_EASE = 22; // 1/s: ~90% of a swipe lands within 0.1 s
+const PARTY_PITCH_RANGE = [-1.05, 0.12]; // torch: down at the feet .. just over the horizon
+const PARTY_LOOK_HOLD = 2500; // ms after the last swipe before the torch follows the walk again
 
 const _move = new Vector3();
 const _fpp = new Vector3();
@@ -63,7 +60,6 @@ const _probe = new Vector3();
 const _aim = new Vector3();
 const _ray = new Raycaster();
 const _prev = new Vector3();
-const _phoneUp = new Vector3();
 const _soloPos = new Vector3();
 const _soloQ = new Quaternion();
 const _partyPos = new Vector3();
@@ -79,57 +75,21 @@ const smooth = (t) => t * t * (3 - 2 * t);
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function stepPhoneAim(p, r, dt, partyMode) {
-  const ph = p.phone;
-  const live = r && r.hasGyro && isFresh(r) && r.torchFollow;
-  if (!live) {
-    ph.lastHeading = null; // re-anchor (no jump) when aiming resumes
-    ph.primed = false;
-    return false;
-  }
-  ph.q ??= new Quaternion();
-  ph.target ??= new Quaternion();
-  ph.target.set(r.q[0], r.q[1], r.q[2], r.q[3]).normalize();
-  if (!ph.primed) {
-    ph.q.copy(ph.target);
-    ph.primed = true;
-  } else {
-    ph.q.slerp(ph.target, 1 - Math.exp(-PHONE_SMOOTHING * dt));
-  }
-
-  // Top edge of the phone (device +Y) in the earth frame: x east, y north, z up.
-  _phoneUp.set(0, 1, 0).applyQuaternion(ph.q);
-  const elevation = Math.asin(clamp(_phoneUp.z, -1, 1));
-
-  // Recenter / new phone: its current tilt becomes "level" (solo) or "resting
-  // torch" (party), and in party mode its heading becomes "into the screen".
-  if (ph.calibration !== r.calibration) {
-    ph.calibration = r.calibration;
-    ph.pitchZero = elevation;
-    ph.lastHeading = null;
-    if (partyMode) p.viewYaw = PARTY_YAW;
-  }
-
-  // Heading is meaningless when pointing straight up/down: hold it there.
-  if (Math.abs(_phoneUp.z) < 0.96) {
-    const heading = Math.atan2(_phoneUp.x, _phoneUp.y); // clockwise from north
-    if (ph.lastHeading !== null) {
-      const d = wrapAngle(heading - ph.lastHeading);
-      if (Math.abs(d) > PHONE_YAW_DEADBAND) {
-        p.viewYaw = wrapAngle(p.viewYaw - d * PHONE_YAW_GAIN);
-        ph.lastHeading = heading;
-      }
-    } else {
-      ph.lastHeading = heading;
-    }
-  } else {
-    ph.lastHeading = null;
-  }
-
-  const base = partyMode ? PARTY_TORCH_PITCH : 0;
-  const targetPitch = base + (elevation - ph.pitchZero) * PHONE_PITCH_GAIN;
-  p.pitch += (targetPitch - p.pitch) * (1 - Math.exp(-20 * dt));
-  return true;
+// Apply this frame's share of the phone's queued look. True while the player
+// is steering the view/torch by hand (recent swipes).
+function stepPhoneLook(p, r, dt, partyMode) {
+  if (!r) return false;
+  const k = 1 - Math.exp(-LOOK_EASE * dt);
+  const dx = r.pendingYaw * k;
+  const dy = r.pendingPitch * k;
+  r.pendingYaw -= dx;
+  r.pendingPitch -= dy;
+  if (Math.abs(r.pendingYaw) < 1e-5) r.pendingYaw = 0;
+  if (Math.abs(r.pendingPitch) < 1e-5) r.pendingPitch = 0;
+  p.viewYaw = wrapAngle(p.viewYaw - dx);
+  p.pitch += dy;
+  if (partyMode) p.pitch = clamp(p.pitch, PARTY_PITCH_RANGE[0], PARTY_PITCH_RANGE[1]);
+  return performance.now() - r.lastLook < PARTY_LOOK_HOLD;
 }
 
 // Third-person camera position for a given yaw/pitch, pulled in if a house
@@ -160,8 +120,8 @@ function thirdPersonPosition(out, pivot, yaw, pitch, distance, shoulder) {
 
 // One character's movement for this frame.
 function stepBody(p, r, dt, { keyboard, partyMode }) {
-  // -- Phone: gyro aims the view (solo) or the torch (party) --
-  const gyro = stepPhoneAim(p, r, dt, partyMode);
+  // -- Phone: the look pad turns the view (solo) or the torch (party) --
+  const steering = stepPhoneLook(p, r, dt, partyMode);
 
   // -- Turning: arrow keys (dragging turns the view in the pointer handlers) --
   if (keyboard) {
@@ -197,8 +157,8 @@ function stepBody(p, r, dt, { keyboard, partyMode }) {
   const moved = Math.hypot(p.position.x - _prev.x, p.position.z - _prev.z);
   p.speed = dt > 0 ? moved / dt : 0;
 
-  // Party, no gyro (or aiming paused): the torch simply looks where you walk.
-  if (partyMode && !gyro) {
+  // Party, not swiping lately: the torch simply looks where you walk.
+  if (partyMode && !steering) {
     if (p.speed > 0.4) {
       const walkYaw = Math.atan2(-(p.position.x - _prev.x), -(p.position.z - _prev.z));
       p.viewYaw = wrapAngle(p.viewYaw + wrapAngle(walkYaw - p.viewYaw) * (1 - Math.exp(-6 * dt)));

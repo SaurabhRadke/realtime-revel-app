@@ -14,14 +14,14 @@ import { io } from "socket.io-client";
 import { deleteRemote, getRemote } from "@/components/scene/remote";
 import { Peer } from "./peer";
 import {
-  FLAG_GYRO,
   FLAG_RUN,
-  FLAG_TORCH,
+  LOOK_UNIT,
   PKT_INPUT,
   PKT_PING,
   PKT_PONG,
   decode,
   encodePing,
+  lookDelta,
   seqNewer,
 } from "./protocol";
 
@@ -87,7 +87,7 @@ class HostSession {
   /**
    * Everything a phone asks of the screen, for the UI to handle:
    *   {name:"joined"|"left", peerId, text: name}
-   *   {name:"lights"|"view"|"character"|"recenter"|"start"|"again", peerId}
+   *   {name:"lights"|"view"|"character"|"start"|"again", peerId}
    *   {name:"chat"|"rename", peerId, text}
    */
   onAction(fn) {
@@ -207,7 +207,7 @@ class HostSession {
     entry.sent = null;
     this.#peers.set(id, entry);
     this.#connectRtc(entry);
-    getRemote(id).calibration += 1;
+    getRemote(id).lookPrimed = false; // the next packet's totals are the new zero
     this.#publishPeers();
     if (!known) this.#emitAction({ name: "joined", peerId: id, text: name });
   }
@@ -274,12 +274,19 @@ class HostSession {
         this.#publishPeers();
       }
       const remote = getRemote(from);
-      remote.q[0] = pkt.q[0];
-      remote.q[1] = pkt.q[1];
-      remote.q[2] = pkt.q[2];
-      remote.q[3] = pkt.q[3];
-      remote.hasGyro = (pkt.flags & FLAG_GYRO) !== 0;
-      remote.torchFollow = (pkt.flags & FLAG_TORCH) !== 0;
+      // Look: queue the turn since the last packet; the scene eases it in.
+      if (remote.lookPrimed) {
+        const dx = lookDelta(pkt.lookX, remote.lookX) * LOOK_UNIT;
+        const dy = lookDelta(pkt.lookY, remote.lookY) * LOOK_UNIT;
+        if (dx || dy) {
+          remote.pendingYaw = Math.max(-3, Math.min(3, remote.pendingYaw + dx));
+          remote.pendingPitch = Math.max(-2, Math.min(2, remote.pendingPitch + dy));
+          remote.lastLook = performance.now();
+        }
+      }
+      remote.lookX = pkt.lookX;
+      remote.lookY = pkt.lookY;
+      remote.lookPrimed = true;
       remote.run = (pkt.flags & FLAG_RUN) !== 0;
       remote.joyX = Math.max(-1, Math.min(1, pkt.joyX));
       remote.joyY = Math.max(-1, Math.min(1, pkt.joyY));
@@ -297,7 +304,6 @@ class HostSession {
   #onMessage(from, obj) {
     if (!this.#peers.has(from)) return;
     if (obj.type === "action" && typeof obj.name === "string") {
-      if (obj.name === "recenter") getRemote(from).calibration += 1;
       this.#emitAction({ name: obj.name, peerId: from });
     } else if ((obj.type === "chat" || obj.type === "rename") && typeof obj.text === "string") {
       this.#emitAction({ name: obj.type, peerId: from, text: obj.text });

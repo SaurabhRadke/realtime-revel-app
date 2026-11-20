@@ -398,3 +398,23 @@
     font-size: 20px;
   }
 }
+
+.sense {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(233, 223, 200, 0.7);
+}
+
+.sense b {
+  font-weight: 400;
+  color: #a8d8ff;
+}
+
+.sense[data-level="2"] b {
+  color: #ffd36e;
+}
+
+.sense[data-level="3"] b,
+.sense[data-level="4"] b {
+  color: #ff8a4a;
+}

@@ -346,22 +346,150 @@
   font-size: 17px;
 }
 
-/* ---- Joystick (centre stage) ---- */
+/* ---- Key sense (hot / cold) ---- */
 
-.stage {
+.sense {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  color: rgba(233, 223, 200, 0.7);
+}
+
+.senseBars {
+  display: flex;
+  gap: 4px;
+}
+
+.senseBar {
+  width: 18px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.senseBar[data-on="true"]:nth-child(1) { background: #7fb4ff; }
+.senseBar[data-on="true"]:nth-child(2) { background: #a8d8c0; }
+.senseBar[data-on="true"]:nth-child(3) { background: #ffd36e; }
+.senseBar[data-on="true"]:nth-child(4) { background: #ff9d4a; }
+.senseBar[data-on="true"]:nth-child(5) { background: #ff5a3c; box-shadow: 0 0 10px #ff5a3c; }
+
+.senseWord {
+  min-width: 5.5em;
+  color: #f6eedb;
+}
+
+.sense[data-level="3"] .senseWord,
+.sense[data-level="4"] .senseWord {
+  color: #ffb070;
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
+/* ---- Play area: joystick on the left half, look pad on the right half ---- */
+
+.pads {
   flex: 1;
   min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.moveZone {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+.zoneLabel {
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(233, 223, 200, 0.45);
+}
+
+.lookPad {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 26px;
+  border: 1.5px dashed rgba(233, 223, 200, 0.16);
+  background:
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 28px);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.lookPad[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  border-style: solid;
+  background-color: rgba(255, 255, 255, 0.025);
+}
+
+.lookHint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 14px;
+  color: rgba(233, 223, 200, 0.5);
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+.lookPad[data-active="true"] .lookHint {
+  opacity: 0.15;
+}
+
+.lookArrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.lookArrowL { left: 10px; top: calc(50% - 6px); border-right-color: #e9dfc8; }
+.lookArrowR { right: 10px; top: calc(50% - 6px); border-left-color: #e9dfc8; }
+.lookArrowU { top: 10px; left: calc(50% - 6px); border-bottom-color: #e9dfc8; }
+.lookArrowD { bottom: 10px; left: calc(50% - 6px); border-top-color: #e9dfc8; }
+
+.lookDot {
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, #fff) 0%, color-mix(in srgb, var(--accent) 25%, transparent) 40%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  will-change: transform;
+}
+
+.lookPad[data-active="true"] .lookDot {
+  opacity: 1;
 }
 
 .stick {
   position: relative;
   flex: none;
-  width: min(68vw, 46dvh, 280px);
+  width: min(40vw, 36dvh, 240px);
   aspect-ratio: 1;
   border-radius: 50%;
   background:
@@ -465,19 +593,12 @@
   border-color: var(--accent);
 }
 
-.aimText {
-  margin: 0;
-  font-size: 14px;
-  color: rgba(233, 223, 200, 0.6);
-  text-align: center;
-}
-
 /* ---- Dock ---- */
 
 .dock {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  align-items: end;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
   gap: 8px;
 }
 
@@ -548,11 +669,6 @@
   font-weight: 700;
 }
 
-.needle {
-  display: grid;
-  transition: transform 0.08s linear;
-}
-
 .extras {
   display: flex;
   justify-content: center;
@@ -564,20 +680,25 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 12px;
   border: 1px solid rgba(233, 223, 200, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   color: #e9dfc8;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .pill[data-on="true"] {
   color: #ffe2a0;
   border-color: rgba(255, 211, 110, 0.4);
+}
+
+.dim {
+  opacity: 0.25;
 }
 
 .pill:active {
@@ -835,47 +956,65 @@
   }
 }
 
-/* Landscape: joystick on the left, everything else on the right. */
+/* Landscape (the natural way to hold a two-thumb controller): header and
+   stats share a row, the play area gets the height. */
 @media (orientation: landscape) and (max-height: 520px) {
   .live {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-    grid-template-rows: auto auto auto 1fr auto;
-    column-gap: 18px;
-    row-gap: 6px;
+    gap: 5px;
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
   }
 
-  .stage {
-    grid-column: 1;
-    grid-row: 1 / 6;
+  .bar {
+    position: absolute;
+    top: max(6px, env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    right: 52%;
+  }
+
+  .stats {
+    margin-left: 50%;
+  }
+
+  .me {
+    min-height: 40px;
+  }
+
+  .meDot {
+    width: 28px;
+    height: 28px;
+  }
+
+  .stat {
+    padding: 4px 2px;
+  }
+
+  .statVal {
+    font-size: 16px;
+  }
+
+  .objective,
+  .result {
+    min-height: 0;
+    font-size: 14px;
+    padding: 2px 4px;
   }
 
   .stick {
-    width: min(42vw, 78dvh, 260px);
-  }
-
-  .bar,
-  .stats,
-  .objective,
-  .result,
-  .dock,
-  .extras,
-  .startBtn {
-    grid-column: 2;
-  }
-
-  .objective {
-    min-height: 0;
-    font-size: 14px;
+    width: min(30vw, 52dvh, 220px);
   }
 
   .roundIcon,
   .roundBig .roundIcon {
-    width: 50px;
-    height: 50px;
+    width: 48px;
+    height: 48px;
+  }
+
+  .roundLabel {
+    display: none;
   }
 
   .nearToast {
-    left: 75%;
+    top: calc(max(6px, env(safe-area-inset-top)) + 52px);
   }
 }

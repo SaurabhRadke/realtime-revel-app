@@ -2,7 +2,7 @@ import Controller from "./Controller";
 
 export const metadata = {
   title: "Controller · Lanterns & Keys",
-  description: "Phone controller: joystick to walk, point the phone like a torch to find the hidden keys.",
+  description: "Phone controller: joystick to walk, swipe to look and swing your torch to find the hidden keys.",
 };
 
 export const viewport = {

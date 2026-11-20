@@ -6,8 +6,8 @@
 // response is sent), so the socket server lives here. Next's own upgrade
 // handler only claims its HMR path and leaves other upgrades to us.
 //
-//   npm run dev     -> https://<lan-ip>:3000 with a self-signed cert (phones need
-//                      HTTPS for gyroscope access). `npm run dev -- --http` for plain http.
+//   npm run dev     -> https://<lan-ip>:3000 with a self-signed cert (HTTPS lets the
+//                      phone keep its screen awake). `npm run dev -- --http` for plain http.
 //   npm run start   -> plain http; put it behind a TLS-terminating host
 //                      (Render, Railway, Fly.io, a VPS with Caddy...).
 //   npm run start:https -> production build with the self-signed cert, for LAN testing.

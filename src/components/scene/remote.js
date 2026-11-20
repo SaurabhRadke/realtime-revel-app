@@ -10,19 +10,19 @@ export function createRemote() {
   return {
     lastPacket: 0, // performance.now() of the last input packet
 
-    // Phone attitude as a unit quaternion [x, y, z, w] in the earth frame
-    // (x east, y north, z up). The phone's top edge is the torch direction.
-    q: [0, 0, 0, 1],
-    hasGyro: false,
-    torchFollow: true, // phone-side toggle: aim with the phone or not
+    // Look (the phone's right-half swipe pad). The host turns each packet's
+    // running totals into a pending turn; the scene eases it into the view
+    // over a few frames, so 30 Hz packets still feel like 60+ fps.
+    lookX: 0,
+    lookY: 0,
+    lookPrimed: false,
+    pendingYaw: 0, // radians still to turn right
+    pendingPitch: 0, // radians still to look up
+    lastLook: -1e9, // performance.now() of the last swipe
 
     joyX: 0, // -1..1, strafe (right +)
     joyY: 0, // -1..1, walk (forward +)
     run: false,
-
-    // Bumped when the phone asks to recenter, or the phone (re)attaches: the
-    // controller then re-takes the phone's current pose as "straight ahead".
-    calibration: 0,
   };
 }
 

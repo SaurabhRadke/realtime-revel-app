@@ -2,7 +2,7 @@
 //
 // Roles
 //   host        the desktop showing the 3D scene. Creates a room, shows the QR.
-//   controller  a phone that scanned the QR. Sends gyro + joystick input.
+//   controller  a phone that scanned the QR. Sends joystick + look input.
 //
 // The server never interprets input. It
 //   1. pairs controllers with a host (rooms, capacity, host token),

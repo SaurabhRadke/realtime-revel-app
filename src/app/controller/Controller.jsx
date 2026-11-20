@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ControllerSession } from "@/lib/connect/controllerSession";
-import { FLAG_GYRO, FLAG_RUN, FLAG_TORCH, MAX_CHAT, MAX_NAME, ROOM_CODE_RE, cleanText } from "@/lib/connect/protocol";
-import { orientationToQuaternion, requestOrientationPermission, topEdgeAim } from "@/lib/connect/orientation";
+import { FLAG_RUN, MAX_CHAT, MAX_NAME, ROOM_CODE_RE, cleanText } from "@/lib/connect/protocol";
 import styles from "./Controller.module.css";
 
 const SERVER_SNAP = { status: "idle", error: null, hostOnline: false, transport: "relay", rtt: null };
 const noopSubscribe = () => () => {};
 const NAME_KEY = "gyro.playerName";
+const SPEED_KEY = "gyro.lookSpeed";
 
 const ERRORS = {
   not_found: "That room doesn't exist any more. Scan the QR code on the screen again.",
@@ -21,8 +21,13 @@ const ERRORS = {
 
 const QUICK = ["Over here!", "Found a key!", "Follow me", "Race you!", "Nice!", "👋"];
 
-const R2D = 180 / Math.PI;
-const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+// Look pad: radians per CSS pixel swiped (~0.3 degrees), times the chosen speed.
+const LOOK_PER_PX = 0.0054;
+const LOOK_Y_SCALE = 0.75; // up/down a bit calmer than turning
+const LOOK_SPEEDS = [0.55, 0.75, 1, 1.3, 1.7];
+
+// "Key sense": how close the nearest hidden key is, sent by the screen.
+const SENSE = ["Cold", "Cool", "Warm", "Hot", "Burning!"];
 
 const NAME_POOL = ["Wisp", "Moth", "Ember", "Pip", "Rook", "Bramble", "Fable", "Lark", "Quill", "Sable", "Thistle", "Wren"];
 
@@ -34,6 +39,25 @@ function savedName() {
     // private mode
   }
   return NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];
+}
+
+function savedSpeed() {
+  try {
+    const raw = localStorage.getItem(SPEED_KEY);
+    const v = raw == null ? NaN : Number(raw);
+    if (Number.isInteger(v) && v >= 0 && v < LOOK_SPEEDS.length) return v;
+  } catch {
+    // private mode
+  }
+  return 2;
+}
+
+function storeSpeed(v) {
+  try {
+    localStorage.setItem(SPEED_KEY, String(v));
+  } catch {
+    // not remembered
+  }
 }
 
 function storeName(n) {
@@ -57,17 +81,11 @@ const Icon = {
       <path d="M9 21l3-6 3 2v5M6 12l3-4 4 1 3 4 3 1M12 15l-1-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
-  torch: (
-    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-      <path d="M9 14l-5 7M14 9l6-6M9 14l5-5 3 3-5 5z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M17 12l3 1M12 17l1 3M15 15l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity=".7" />
-    </svg>
-  ),
-  recenter: (
-    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-      <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <circle cx="12" cy="12" r="2" fill="currentColor" />
-      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+  look: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+      <path d="M5 3l-2 2 2 2M19 3l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   ),
   chat: (
@@ -185,6 +203,94 @@ function Joystick({ onChange, accent }) {
   );
 }
 
+// ---------- Look pad (right half): swipe to turn, like a mobile shooter ----------
+// Only the finger's movement counts (not where it lands), so any spot of the
+// pad works and lifting + re-swiping keeps turning. Each move event sends its
+// delta straight to the session; the screen smooths it.
+function LookPad({ onLook, speed }) {
+  const pad = useRef(null);
+  const dot = useRef(null);
+  const active = useRef(null);
+  const last = useRef({ x: 0, y: 0 });
+
+  const place = (e) => {
+    const r = pad.current.getBoundingClientRect();
+    dot.current.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
+  };
+
+  const move = (e) => {
+    if (active.current !== e.pointerId) return;
+    // Coalesced events: every touch sample since the last frame (smoother on 120 Hz screens).
+    const list = e.nativeEvent.getCoalescedEvents?.() ?? [];
+    const pts = list.length ? list : [e.nativeEvent];
+    let dx = 0;
+    let dy = 0;
+    for (const p of pts) {
+      dx += p.clientX - last.current.x;
+      dy += p.clientY - last.current.y;
+      last.current = { x: p.clientX, y: p.clientY };
+    }
+    if (dx || dy) {
+      const k = LOOK_PER_PX * LOOK_SPEEDS[speed];
+      onLook(dx * k, -dy * k * LOOK_Y_SCALE);
+    }
+    place(e);
+  };
+
+  const release = (e) => {
+    if (active.current !== e.pointerId) return;
+    active.current = null;
+    pad.current.dataset.active = "false";
+  };
+
+  return (
+    <div
+      ref={pad}
+      className={styles.lookPad}
+      data-active="false"
+      onPointerDown={(e) => {
+        if (active.current !== null) return;
+        active.current = e.pointerId;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        last.current = { x: e.clientX, y: e.clientY };
+        pad.current.dataset.active = "true";
+        place(e);
+      }}
+      onPointerMove={move}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onLostPointerCapture={release}
+      onContextMenu={(e) => e.preventDefault()}
+      role="application"
+      aria-label="Look pad: swipe to look around"
+    >
+      <span className={styles.lookHint}>
+        {Icon.look}
+        <span>Swipe to look</span>
+      </span>
+      <span className={`${styles.lookArrow} ${styles.lookArrowL}`} aria-hidden="true" />
+      <span className={`${styles.lookArrow} ${styles.lookArrowR}`} aria-hidden="true" />
+      <span className={`${styles.lookArrow} ${styles.lookArrowU}`} aria-hidden="true" />
+      <span className={`${styles.lookArrow} ${styles.lookArrowD}`} aria-hidden="true" />
+      <span ref={dot} className={styles.lookDot} aria-hidden="true" />
+    </div>
+  );
+}
+
+function SenseMeter({ level }) {
+  return (
+    <div className={styles.sense} data-level={level} aria-label={`Key sense: ${SENSE[level]}`}>
+      <span className={styles.senseLabel}>Key sense</span>
+      <span className={styles.senseBars} aria-hidden="true">
+        {SENSE.map((_, i) => (
+          <span key={i} className={styles.senseBar} data-on={i <= level} />
+        ))}
+      </span>
+      <span className={styles.senseWord}>{SENSE[level]}</span>
+    </div>
+  );
+}
+
 // ---------- Screens ----------
 function Shell({ children }) {
   return (
@@ -227,7 +333,7 @@ function CodeEntry({ onSubmit }) {
   );
 }
 
-function StartScreen({ room, name, setName, onStart, insecure }) {
+function StartScreen({ room, name, setName, onStart }) {
   return (
     <form
       className={styles.center}
@@ -238,7 +344,7 @@ function StartScreen({ room, name, setName, onStart, insecure }) {
     >
       <p className={styles.kicker}>Room {room}</p>
       <h1 className={styles.title}>Lanterns &amp; Keys</h1>
-      <p className={styles.lead}>A moonlit treasure hunt. Your phone is the torch.</p>
+      <p className={styles.lead}>A moonlit treasure hunt for up to 4 torches.</p>
       <label className={styles.nameField}>
         <span>Your name</span>
         <input
@@ -252,16 +358,15 @@ function StartScreen({ room, name, setName, onStart, insecure }) {
       </label>
       <ul className={styles.howto}>
         <li>
-          <b>Joystick</b> walks your character.
+          <b>Left thumb</b>: joystick walks. <b>Right thumb</b>: swipe to look and swing your torch.
         </li>
         <li>
-          <b>Point the phone</b> at the screen and sweep it like a torch. Keys only show up in its light.
+          Grab the <b>coins</b>. Follow the <b>fireflies</b> into the dark: a hidden key only shows up in torchlight. Watch your <b>key sense</b>.
         </li>
         <li>
-          Find all <b>3 keys</b>, then race to the <b>chest</b> at the crossroads.
+          Three keys unlock the <b>chest</b> at the crossroads. First one there takes it.
         </li>
       </ul>
-      {insecure && <p className={styles.warn}>This page isn&apos;t on HTTPS, so the gyroscope is blocked. The joystick still works.</p>}
       <button className={styles.primary} disabled={!cleanText(name, MAX_NAME)}>
         Join the hunt
       </button>
@@ -423,7 +528,6 @@ export default function Controller() {
 
   // URL + security context are only known in the browser (null on the server).
   const search = useSyncExternalStore(noopSubscribe, () => window.location.search, () => null);
-  const insecure = useSyncExternalStore(noopSubscribe, () => !window.isSecureContext, () => false);
   const [typedRoom, setTypedRoom] = useState(null);
   const [ignoreUrl, setIgnoreUrl] = useState(false);
   const [started, setStarted] = useState(false);
@@ -433,8 +537,8 @@ export default function Controller() {
   const urlRoom = search == null ? "" : (new URLSearchParams(search).get("room") ?? "").toUpperCase();
   const room = typedRoom ?? (!ignoreUrl && ROOM_CODE_RE.test(urlRoom) ? urlRoom : null);
   const phase = search == null ? "loading" : !room ? "code" : !started ? "ready" : "live";
-  const [gyro, setGyro] = useState("pending"); // pending | on | none | denied
-  const [torch, setTorch] = useState(true);
+  const [speed, setSpeed] = useState(() => (typeof window === "undefined" ? 2 : savedSpeed()));
+  const [sense, setSense] = useState(0);
   const [run, setRun] = useState(false);
   const [hostState, setHostState] = useState(null);
   const [you, setYou] = useState(null);
@@ -447,8 +551,6 @@ export default function Controller() {
   const [sheet, setSheet] = useState(null); // null | "chat" | "name"
   const [denied, setDenied] = useState(null);
 
-  const needle = useRef(null);
-  const zero = useRef({ heading: null });
   const sheetRef = useRef(sheet);
   const msgKey = useRef(0);
 
@@ -478,6 +580,9 @@ export default function Controller() {
           case "game":
             setGameState(obj);
             setDeadline(obj.endsIn != null ? Date.now() + obj.endsIn : obj.startsIn != null ? Date.now() + obj.startsIn : null);
+            break;
+          case "sense":
+            setSense(Math.max(0, Math.min(SENSE.length - 1, obj.level | 0)));
             break;
           case "near":
             setNear(Array.isArray(obj.names) ? obj.names.slice(0, 4) : []);
@@ -512,40 +617,8 @@ export default function Controller() {
   // Flags travel in every input packet.
   useEffect(() => {
     if (!session) return;
-    session.setFlags((gyro === "on" ? FLAG_GYRO : 0) | (run ? FLAG_RUN : 0) | (torch ? FLAG_TORCH : 0));
-  }, [session, gyro, run, torch]);
-
-  // Gyroscope -> quaternion, every sensor event (~60 Hz; the session decides what's worth sending).
-  useEffect(() => {
-    if (phase !== "live" || !session || gyro === "denied") return undefined;
-    let raf = 0;
-    let seen = false;
-    const onOrient = (e) => {
-      if (e.beta == null || e.gamma == null) return;
-      if (!seen) {
-        seen = true;
-        setGyro("on");
-      }
-      const q = orientationToQuaternion(e.alpha ?? 0, e.beta, e.gamma);
-      session.setAttitude(q);
-      if (!raf) {
-        raf = requestAnimationFrame(() => {
-          raf = 0;
-          const { heading } = topEdgeAim(q);
-          if (zero.current.heading == null) zero.current.heading = heading;
-          const h = wrap(heading - zero.current.heading);
-          if (needle.current) needle.current.style.transform = `rotate(${h * R2D * 0.6}deg)`;
-        });
-      }
-    };
-    window.addEventListener("deviceorientation", onOrient);
-    const noSensor = setTimeout(() => !seen && setGyro("none"), 2500);
-    return () => {
-      window.removeEventListener("deviceorientation", onOrient);
-      clearTimeout(noSensor);
-      cancelAnimationFrame(raf);
-    };
-  }, [phase, session, gyro]);
+    session.setFlags(run ? FLAG_RUN : 0);
+  }, [session, run]);
 
   // Keep the screen awake while playing.
   useEffect(() => {
@@ -568,18 +641,10 @@ export default function Controller() {
 
   const playerName = cleanText(name, MAX_NAME) || "Player";
 
-  const start = async () => {
-    // Must run inside the tap for iOS to show its motion permission prompt.
-    const perm = await requestOrientationPermission();
-    setGyro(perm === "granted" ? "pending" : perm === "denied" ? "denied" : "none");
+  const start = () => {
     storeName(playerName);
     session.join(room, playerName);
     setStarted(true);
-  };
-
-  const recenter = () => {
-    zero.current.heading = null;
-    session.action("recenter");
   };
 
   if (phase === "loading") return <Shell />;
@@ -595,7 +660,7 @@ export default function Controller() {
   if (phase === "ready") {
     return (
       <Shell>
-        <StartScreen room={room} name={name} setName={setName} onStart={start} insecure={insecure} />
+        <StartScreen room={room} name={name} setName={setName} onStart={start} />
       </Shell>
     );
   }
@@ -628,18 +693,12 @@ export default function Controller() {
   const accent = you?.color ?? "#ffd36e";
   const running = g && (g.phase === "hunt" || g.phase === "unlocked");
   const canStart = g && (g.phase === "lobby" || g.phase === "ended");
-  const aimText =
-    gyro === "on"
-      ? torch
-        ? "Point at the screen, sweep to search"
-        : "Torch aiming paused"
-      : gyro === "denied"
-        ? "Motion access denied: torch follows your walk"
-        : gyro === "none"
-          ? insecure
-            ? "Gyro needs HTTPS: torch follows your walk"
-            : "No gyroscope: torch follows your walk"
-          : "Reading the gyroscope…";
+  const hunting = g?.phase === "hunt";
+  const cycleSpeed = () => {
+    const v = (speed + 1) % LOOK_SPEEDS.length;
+    setSpeed(v);
+    storeSpeed(v);
+  };
 
   return (
     <Shell>
@@ -691,41 +750,41 @@ export default function Controller() {
           </div>
         )}
 
-        <section className={styles.stage}>
-          <Joystick accent={accent} onChange={(x, y) => session.setJoystick(x, y)} />
-          <p className={styles.aimText}>{aimText}</p>
+        {hunting && <SenseMeter level={sense} />}
+
+        <section className={styles.pads}>
+          <div className={styles.moveZone}>
+            <Joystick accent={accent} onChange={(x, y) => session.setJoystick(x, y)} />
+            <span className={styles.zoneLabel}>Move</span>
+          </div>
+          <LookPad speed={speed} onLook={(dx, dy) => session.look(dx, dy)} />
         </section>
 
         <nav className={styles.dock} aria-label="Actions">
           <RoundButton label={run ? "Sprinting" : "Sprint"} on={run} big onPress={() => setRun((v) => !v)}>
             {Icon.run}
           </RoundButton>
-          <RoundButton label={torch ? "Torch aim" : "Aim off"} on={torch && gyro === "on"} disabled={gyro !== "on"} onPress={() => setTorch((v) => !v)}>
-            <span ref={needle} className={styles.needle}>
-              {Icon.torch}
-            </span>
-          </RoundButton>
-          <RoundButton label="Recenter" onPress={recenter} disabled={gyro !== "on"}>
-            {Icon.recenter}
-          </RoundButton>
+          <div className={styles.extras}>
+            <button type="button" className={styles.pill} onClick={() => session.action("character")}>
+              {Icon.character} Character
+            </button>
+            <button type="button" className={styles.pill} data-on={hostState?.lampsOn !== false} onClick={() => session.action("lights")}>
+              {Icon.lamp} {hostState?.lampsOn === false ? "Lamps off" : "Lamps on"}
+            </button>
+            {!party && (
+              <button type="button" className={styles.pill} onClick={() => session.action("view")}>
+                {Icon.eye} {hostState?.thirdPerson ? "3rd person" : "1st person"}
+              </button>
+            )}
+            <button type="button" className={styles.pill} onClick={cycleSpeed} aria-label={`Look speed ${speed + 1} of ${LOOK_SPEEDS.length}`}>
+              {Icon.look} Look {"●".repeat(speed + 1)}
+              <span className={styles.dim}>{"●".repeat(LOOK_SPEEDS.length - speed - 1)}</span>
+            </button>
+          </div>
           <RoundButton label={near.length ? "Talk" : "Chat"} on={near.length > 0} big onPress={openChat} badge={unread || null}>
             {Icon.chat}
           </RoundButton>
         </nav>
-
-        <div className={styles.extras}>
-          <button type="button" className={styles.pill} onClick={() => session.action("character")}>
-            {Icon.character} Change character
-          </button>
-          <button type="button" className={styles.pill} data-on={hostState?.lampsOn !== false} onClick={() => session.action("lights")}>
-            {Icon.lamp} {hostState?.lampsOn === false ? "Lamps off" : "Lamps on"}
-          </button>
-          {!party && (
-            <button type="button" className={styles.pill} onClick={() => session.action("view")}>
-              {Icon.eye} {hostState?.thirdPerson ? "3rd person" : "1st person"}
-            </button>
-          )}
-        </div>
 
         {canStart && (
           <button type="button" className={`${styles.primary} ${styles.startBtn}`} onClick={() => session.action(g.phase === "ended" ? "again" : "start")}>
