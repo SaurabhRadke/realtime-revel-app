@@ -22,7 +22,9 @@ export default function NameTag({ entry }) {
     const el = group.current;
     if (!el) return;
     el.position.set(p.position.x, p.height + 0.32, p.position.z);
-    if (label.current) label.current.style.visibility = p.firstPerson ? "hidden" : "visible";
+    const vis = p.firstPerson ? "hidden" : "visible";
+    // Only touch the DOM when it actually changes (avoids a style write per frame).
+    if (label.current && label.current.style.visibility !== vis) label.current.style.visibility = vis;
   });
 
   return (

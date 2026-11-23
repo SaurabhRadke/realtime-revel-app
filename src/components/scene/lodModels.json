@@ -1,0 +1,155 @@
+{
+  "/models/abandoned.glb": [
+    {
+      "url": "/models/lod/abandoned.lod1.glb",
+      "error": 0.001846,
+      "tris": 18732
+    },
+    {
+      "url": "/models/lod/abandoned.lod2.glb",
+      "error": 0.003697,
+      "tris": 11436
+    },
+    {
+      "url": "/models/lod/abandoned.lod3.glb",
+      "error": 0.007397,
+      "tris": 7228
+    }
+  ],
+  "/models/abandoned-house.glb": [
+    {
+      "url": "/models/lod/abandoned-house.lod1.glb",
+      "error": 0.001726,
+      "tris": 37058
+    },
+    {
+      "url": "/models/lod/abandoned-house.lod2.glb",
+      "error": 0.003498,
+      "tris": 27660
+    },
+    {
+      "url": "/models/lod/abandoned-house.lod3.glb",
+      "error": 0.006968,
+      "tris": 19880
+    }
+  ],
+  "/models/fairy-house.glb": [
+    {
+      "url": "/models/lod/fairy-house.lod1.glb",
+      "error": 0.00202,
+      "tris": 30546
+    },
+    {
+      "url": "/models/lod/fairy-house.lod2.glb",
+      "error": 0.004032,
+      "tris": 18838
+    },
+    {
+      "url": "/models/lod/fairy-house.lod3.glb",
+      "error": 0.008072,
+      "tris": 11604
+    }
+  ],
+  "/models/fantasy.glb": [
+    {
+      "url": "/models/lod/fantasy.lod1.glb",
+      "error": 0.001781,
+      "tris": 29966
+    },
+    {
+      "url": "/models/lod/fantasy.lod2.glb",
+      "error": 0.003573,
+      "tris": 19258
+    },
+    {
+      "url": "/models/lod/fantasy.lod3.glb",
+      "error": 0.007141,
+      "tris": 12078
+    }
+  ],
+  "/models/fantasy-house-3d.glb": [
+    {
+      "url": "/models/lod/fantasy-house-3d.lod1.glb",
+      "error": 0.001668,
+      "tris": 20474
+    },
+    {
+      "url": "/models/lod/fantasy-house-3d.lod2.glb",
+      "error": 0.003328,
+      "tris": 12844
+    },
+    {
+      "url": "/models/lod/fantasy-house-3d.lod3.glb",
+      "error": 0.006697,
+      "tris": 7868
+    }
+  ],
+  "/models/glb.glb": [
+    {
+      "url": "/models/lod/glb.lod1.glb",
+      "error": 0.001752,
+      "tris": 28640
+    },
+    {
+      "url": "/models/lod/glb.lod2.glb",
+      "error": 0.00351,
+      "tris": 18934
+    },
+    {
+      "url": "/models/lod/glb.lod3.glb",
+      "error": 0.006872,
+      "tris": 12352
+    }
+  ],
+  "/models/medieval-architecture.glb": [
+    {
+      "url": "/models/lod/medieval-architecture.lod1.glb",
+      "error": 0.001704,
+      "tris": 34104
+    },
+    {
+      "url": "/models/lod/medieval-architecture.lod2.glb",
+      "error": 0.003407,
+      "tris": 22870
+    },
+    {
+      "url": "/models/lod/medieval-architecture.lod3.glb",
+      "error": 0.006814,
+      "tris": 14598
+    }
+  ],
+  "/models/victorian-street-lamp.glb": [
+    {
+      "url": "/models/lod/victorian-street-lamp.lod1.glb",
+      "error": 0.002314,
+      "tris": 21128
+    },
+    {
+      "url": "/models/lod/victorian-street-lamp.lod2.glb",
+      "error": 0.0046,
+      "tris": 12370
+    },
+    {
+      "url": "/models/lod/victorian-street-lamp.lod3.glb",
+      "error": 0.00932,
+      "tris": 7780
+    }
+  ],
+  "/models/witch-cottage.glb": [
+    {
+      "url": "/models/lod/witch-cottage.lod1.glb",
+      "error": 0.001836,
+      "tris": 31352
+    },
+    {
+      "url": "/models/lod/witch-cottage.lod2.glb",
+      "error": 0.003647,
+      "tris": 21484
+    },
+    {
+      "url": "/models/lod/witch-cottage.lod3.glb",
+      "error": 0.007238,
+      "tris": 13798
+    }
+  ]
+}

@@ -86,7 +86,12 @@ export function patchLampLight(shader) {
     .replace("#include <common>", "#include <common>\nvarying vec3 vLampWorld;")
     .replace(
       "#include <project_vertex>",
-      "#include <project_vertex>\nvLampWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+      `#include <project_vertex>
+      vec4 lampLocal = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        lampLocal = instanceMatrix * lampLocal; // instanced street lamps
+      #endif
+      vLampWorld = (modelMatrix * lampLocal).xyz;`,
     );
   shader.fragmentShader = shader.fragmentShader
     .replace("#include <common>", `#include <common>\nvarying vec3 vLampWorld;\n${LAMP_LIGHT_GLSL}`)

@@ -538,6 +538,8 @@ const _m = new Matrix4();
 const _o = new Object3D();
 const _v = new Vector3();
 const _at = new Vector3();
+const _players = [];
+const _oiled = [];
 
 // Is a hidden prize lit right now? `oiled[j]`: player j's torch burns torch oil.
 function keyIsLit(k, players, oiled, t) {
@@ -615,9 +617,15 @@ function stepTreasure(state, rawDt, c) {
   const s = getGame();
   const running = s.phase === "hunt" || s.phase === "unlocked";
   const entries = getPlayers();
-  const players = entries.map((e) => getPlayerState(e.id, e.slot));
   const nowMs = Date.now();
-  const oiled = entries.map((e) => boostLeft(e.id, "oil", nowMs, s) > 0);
+  // Reused every frame (no garbage): read-only for the rest of this step.
+  const players = _players;
+  const oiled = _oiled;
+  players.length = oiled.length = entries.length;
+  for (let j = 0; j < entries.length; j++) {
+    players[j] = getPlayerState(entries[j].id, entries[j].slot);
+    oiled[j] = boostLeft(entries[j].id, "oil", nowMs, s) > 0;
+  }
 
   // ---- coins: drift to whoever is close, then pop up in a burst of light ----
   const cm = coinsRef.current;

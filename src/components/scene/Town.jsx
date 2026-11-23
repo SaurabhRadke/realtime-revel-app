@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import {
@@ -9,7 +9,14 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
+  DynamicDrawUsage,
   Float32BufferAttribute,
+  Frustum,
+  Group,
+  LOD,
+  Matrix4,
+  Mesh,
+  Sphere,
   Vector3,
 } from "three";
 import { PALETTE } from "./config";
@@ -23,6 +30,7 @@ import {
 } from "./lampLight";
 import { LAMP_URL, getTownLayout, getTownModelUrls } from "./townLayout";
 import { MUD_TILE_METRES, createEdgeMask, createMudTextures } from "./roadTextures";
+import { HYSTERESIS, loadLodLevels, lodLevelsFor, onLodViewChange, switchDistance } from "./lod";
 
 // ---- Mud path: a ribbon following the path's centre line ----
 
@@ -250,6 +258,22 @@ function LampSwitch({ on, level = 1 }) {
 
 // ---- A placed model (house, lamp, prop, townsfolk) ----
 
+// Weathered wood/stone/thatch, not metal: without an environment map metallic
+// areas would render nearly black.
+function prepareMaterial(m) {
+  m.metalness = 0;
+  if ("specularIntensity" in m) m.specularIntensity = 0.4;
+  makeLampLit(m); // picks up the street lamps' warm light
+}
+
+const firstMaterial = (root) => {
+  let material = null;
+  root.traverse((o) => {
+    if (o.isMesh && !material) material = o.material;
+  });
+  return material;
+};
+
 export function Model({ url, scale }) {
   const { scene } = useGLTF(url, false);
 
@@ -258,13 +282,7 @@ export function Model({ url, scale }) {
     root.traverse((o) => {
       if (!o.isMesh) return;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) {
-        // Weathered wood/stone/thatch, not metal: without an environment map
-        // metallic areas would render nearly black.
-        m.metalness = 0;
-        if ("specularIntensity" in m) m.specularIntensity = 0.4;
-        makeLampLit(m); // picks up the street lamps' warm light
-      }
+      for (const m of mats) prepareMaterial(m);
     });
     // Centre the footprint on the origin and stand it on the ground.
     root.scale.setScalar(scale);
@@ -272,10 +290,52 @@ export function Model({ url, scale }) {
     const box = new Box3().setFromObject(root);
     const c = box.getCenter(new Vector3());
     root.position.set(-c.x, -box.min.y - 0.05, -c.z); // sunk a touch into the soil
+    root.userData.radius = box.getSize(new Vector3()).length() / 2;
     return root;
   }, [scene, scale]);
 
-  return <primitive object={model} />;
+  // Houses: full detail up close, lighter copies once the difference is
+  // smaller than a pixel (see lod.js). Other models are drawn as they are.
+  const lod = useMemo(() => {
+    if (!lodLevelsFor(url)) return null;
+    const l = new LOD();
+    l.addLevel(model, 0);
+    return l;
+  }, [url, model]);
+
+  useEffect(() => {
+    if (!lod) return undefined;
+    let alive = true;
+    let unsubscribe = null;
+    loadLodLevels(url).then((levels) => {
+      if (!alive || !levels.length) return;
+      const material = firstMaterial(model);
+      const radius = model.userData.radius;
+      for (const lv of levels) {
+        // Same placement as the full model; the mesh keeps its in-file transform.
+        const g = new Group();
+        g.position.copy(model.position);
+        g.quaternion.copy(model.quaternion);
+        g.scale.copy(model.scale);
+        const mesh = new Mesh(lv.geometry, material);
+        lv.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        g.add(mesh);
+        lod.addLevel(g, switchDistance(lv.error * scale, radius), HYSTERESIS);
+      }
+      unsubscribe = onLodViewChange(() => {
+        levels.forEach((lv, i) => {
+          lod.levels[i + 1].distance = switchDistance(lv.error * scale, radius);
+        });
+      });
+    });
+    return () => {
+      alive = false;
+      unsubscribe?.();
+      while (lod.levels.length > 1) lod.remove(lod.levels.pop().object);
+    };
+  }, [lod, model, url, scale]);
+
+  return <primitive object={lod ?? model} />;
 }
 
 function House({ house, mud, shadow }) {
@@ -293,10 +353,131 @@ function House({ house, mud, shadow }) {
   );
 }
 
-function Lamp({ lamp }) {
+// ---- Street lamps: one instanced draw per detail level ----
+//
+// Every lamp is the same model, so they are drawn as instances. Each frame
+// (cheap: a couple of dozen lamps) every lamp is checked against the camera
+// view (lamps behind you are skipped, as before) and given the lightest
+// detail level whose error is still under a pixel at its distance.
+
+const _frustum = new Frustum();
+const _viewProj = new Matrix4();
+const _sphere = new Sphere();
+
+function Lamps({ lamps }) {
+  const { scene } = useGLTF(LAMP_URL, false);
+
+  // Full-detail level + where each lamp stands.
+  const base = useMemo(() => {
+    scene.updateMatrixWorld(true);
+    let mesh = null;
+    scene.traverse((o) => {
+      if (o.isMesh && !mesh) mesh = o;
+    });
+    prepareMaterial(mesh.material);
+    const scale = lamps[0]?.scale ?? 1; // every lamp is the same height
+    // Same placement as <Model>: scaled, footprint centred, sunk 5 cm.
+    const scaled = new Matrix4().makeScale(scale, scale, scale);
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const box = mesh.geometry.boundingBox.clone().applyMatrix4(scaled.clone().multiply(mesh.matrixWorld));
+    const c = box.getCenter(new Vector3());
+    const place = new Matrix4().makeTranslation(-c.x, -box.min.y - 0.05, -c.z).multiply(scaled);
+    const radius = box.getSize(new Vector3()).length() / 2;
+    const centreY = (box.max.y - box.min.y) / 2 - 0.05;
+    const worlds = lamps.map((l) => {
+      const m = new Matrix4().makeRotationY(l.yaw);
+      m.setPosition(l.x, 0, l.z);
+      return m;
+    });
+    const centres = lamps.map((l) => new Vector3(l.x, centreY, l.z));
+    return { mesh, scale, place, radius, worlds, centres };
+  }, [scene, lamps]);
+
+  // Levels: [{ geometry, local, error }] - full detail first, lighter ones
+  // added when they finish downloading.
+  const [levels, setLevels] = useState(() => [
+    { geometry: base.mesh.geometry, local: base.place.clone().multiply(base.mesh.matrixWorld), error: 0 },
+  ]);
+  useEffect(() => {
+    let alive = true;
+    loadLodLevels(LAMP_URL).then((extra) => {
+      if (!alive || !extra.length) return;
+      setLevels((prev) => [
+        prev[0],
+        ...extra.map((lv) => ({ geometry: lv.geometry, local: base.place.clone().multiply(lv.matrix), error: lv.error })),
+      ]);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [base]);
+
+  // Per lamp and level: the final instance matrix.
+  const matrices = useMemo(
+    () => base.worlds.map((w) => levels.map((lv) => w.clone().multiply(lv.local))),
+    [base, levels],
+  );
+
+  const meshes = useRef([]);
+  const current = useRef(null); // chosen level per lamp (-1 = out of view)
+  const dirty = useRef(true);
+  useEffect(() => {
+    current.current = new Int8Array(lamps.length).fill(-2);
+    dirty.current = true;
+  }, [lamps, levels]);
+
+  useFrame(({ camera }) => {
+    const chosen = current.current;
+    if (!chosen) return;
+    camera.updateMatrixWorld();
+    _viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_viewProj);
+    const camPos = camera.position;
+    let changed = dirty.current;
+    for (let l = 0; l < base.centres.length; l++) {
+      let level = -1;
+      _sphere.set(base.centres[l], base.radius);
+      if (_frustum.intersectsSphere(_sphere)) {
+        const d = camPos.distanceTo(base.centres[l]);
+        level = 0;
+        for (let i = 1; i < levels.length; i++) {
+          let at = switchDistance(levels[i].error * base.scale, base.radius);
+          if (chosen[l] >= i) at -= at * HYSTERESIS;
+          if (d >= at) level = i;
+          else break;
+        }
+      }
+      if (level !== chosen[l]) {
+        chosen[l] = level;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    dirty.current = false;
+    for (let i = 0; i < levels.length; i++) {
+      const im = meshes.current[i];
+      if (!im) continue;
+      let n = 0;
+      for (let l = 0; l < chosen.length; l++) if (chosen[l] === i) im.setMatrixAt(n++, matrices[l][i]);
+      im.count = n;
+      im.instanceMatrix.needsUpdate = true;
+    }
+  });
+
   return (
-    <group position={[lamp.x, 0, lamp.z]} rotation={[0, lamp.yaw, 0]}>
-      <Model url={LAMP_URL} scale={lamp.scale} />
+    <group>
+      {levels.map((lv, i) => (
+        <instancedMesh
+          key={lv.geometry.uuid}
+          ref={(el) => {
+            meshes.current[i] = el;
+            if (el) el.instanceMatrix.setUsage(DynamicDrawUsage);
+          }}
+          args={[lv.geometry, base.mesh.material, lamps.length]}
+          count={0}
+          frustumCulled={false}
+        />
+      ))}
     </group>
   );
 }
@@ -322,9 +503,7 @@ export default function Town({ lampsOn = true, lampLevel = 1 }) {
       {houses.map((h, i) => (
         <House key={`h${i}`} house={h} mud={res.mud} shadow={res.shadow} />
       ))}
-      {lamps.map((l, i) => (
-        <Lamp key={`l${i}`} lamp={l} />
-      ))}
+      <Lamps lamps={lamps} />
       <LanternGlow count={litCountFor(lampLevel)} />
       <LampMap count={litCountFor(lampLevel)} />
       <LampSwitch on={lampsOn} level={litCountFor(lampLevel) / Math.max(1, LANTERNS.length)} />

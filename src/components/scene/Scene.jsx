@@ -2,6 +2,7 @@
 
 import { Suspense, useRef, useState, useSyncExternalStore } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { WebGLRenderTarget } from "three";
 import { PerformanceMonitor, useProgress } from "@react-three/drei";
 import Effects from "./Effects";
 import Field from "./Field";
@@ -19,6 +20,7 @@ import Props from "./Props";
 import { game, lampLevel } from "./game";
 import { roster } from "./roster";
 import { QUALITY_TIERS, START_POSITION } from "./config";
+import { setLodView, startLodLoading } from "./lod";
 import styles from "./Scene.module.css";
 
 // Pick a sensible starting tier; PerformanceMonitor then adjusts it live
@@ -31,15 +33,48 @@ function guessInitialTier() {
   return cores >= 8 ? 2 : 1;
 }
 
+// Compiles the shaders of EVERYTHING in the scene, including what is hidden
+// right now (treasure, sparks, compasses, chest beam...), so they don't stall
+// a frame mid-game the first time they appear. Compiled against a render
+// target, i.e. the same shader variant the post-processing pass renders with.
+function precompile(gl, scene, camera) {
+  const target = new WebGLRenderTarget(1, 1);
+  const previous = gl.getRenderTarget();
+  let done;
+  try {
+    gl.setRenderTarget(target);
+    done = gl.compileAsync(scene, camera); // compiles synchronously, then waits
+  } catch {
+    done = Promise.resolve();
+  } finally {
+    gl.setRenderTarget(previous);
+    target.dispose();
+  }
+  // Never hold the loading screen hostage: give up waiting after 4 s.
+  return Promise.race([done.catch(() => {}), new Promise((r) => setTimeout(r, 4000))]);
+}
+
 // Mounted inside the Suspense boundary, so it only runs once every model has
-// loaded. Waits a few rendered frames (shader compile + texture upload happen
-// on the first one) before lifting the loading screen.
+// loaded. Waits a few rendered frames (texture upload happens on the first
+// one), precompiles every shader, then lifts the loading screen and starts
+// fetching the distance LODs in the background.
 function ReadySignal({ onReady }) {
   const frames = useRef(0);
-  useFrame(() => {
+  useFrame(({ gl, scene, camera }) => {
     frames.current += 1;
-    if (frames.current === 3) onReady();
+    if (frames.current !== 3) return;
+    precompile(gl, scene, camera).then(() => {
+      onReady();
+      startLodLoading();
+    });
   });
+  return null;
+}
+
+// Keeps the LOD switch distances matched to the real pixel size (render
+// height x device pixel ratio, camera field of view).
+function LodView() {
+  useFrame(({ camera, size, viewport }) => setLodView(camera.fov, size.height * viewport.dpr));
   return null;
 }
 
@@ -102,6 +137,7 @@ export default function Scene({ lampsOn = true, thirdPerson = false }) {
           <Treasure />
 
           <Effects multisampling={q.multisampling} />
+          <LodView />
           <ReadySignal onReady={() => setReady(true)} />
         </Suspense>
       </Canvas>
